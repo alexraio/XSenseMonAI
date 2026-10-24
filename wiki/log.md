@@ -141,3 +141,13 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
   4. `google/gemma-4-12b` (12B without Thinking): Benchmark winner for incident response (~1m 13s, 498 output tokens), producing actionable remediation (host isolation of `172.16.30.16`, target mapping `192.168.50.117`, VLAN ACL reinforcement).
 - Key Architectural Insight: Disabling internal reasoning/thinking when using strict OpenAI Structured Output (`json_schema`) increases usable payload tokens by +345% and eliminates JSON schema truncation.
 - Ingested immutable benchmark record in [`wiki/raw/2026-10-24-local-llm-benchmark.md`](raw/2026-10-24-local-llm-benchmark.md) and linked it in [`wiki/index.md`](index.md) and [`wiki/components/ai-analyzer-minimax.md`](components/ai-analyzer-minimax.md).
+
+---
+
+## [2026-10-24] roadmap | Next Milestone: Interactive Onboarding & Installation Wizard (`setup.sh`)
+
+- Formulated upcoming roadmap goal to streamline deployment for end users:
+  - Evaluate the creation of an interactive `setup.sh` (or CLI wizard) to automate prerequisite validation (Docker, Docker Compose, port availability on `5140` and `3100`).
+  - Interactive `.env` creation (guiding user through cloud vs. local LLM options, Telegram token configuration, and auto-discovery testing).
+  - One-click launch and automated synthetic log injection to verify end-to-end functionality in under 2 minutes.
+  - Review feasibility, ergonomics, and maintenance trade-offs during the next session.
