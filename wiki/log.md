@@ -34,7 +34,7 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
 - Launched the Docker stack on macOS Docker Desktop and diagnosed/fixed two live issues:
   1. **Vector VRL Type Safety**: Refined infallible `to_string()` and `is_ipv4()` assignments in [`config/vector/vector.yaml`](../config/vector/vector.yaml) so `vector:0.39.0-alpine` passes healthchecks cleanly.
   2. **MiniMax Parameter & Telegram Auto-Discovery**: Removed the unsupported `temperature` parameter for `MiniMax-M3` in [`analyzer/src/ai_analyst.py`](../analyzer/src/ai_analyst.py) and added automatic numeric `chat_id` discovery via Telegram `getUpdates` in [`analyzer/src/notifier.py`](../analyzer/src/notifier.py).
-- Sent synthetic pfSense traffic (5 background noise packets, 65 WAN port-scan packets across 12 ports from `185.220.101.42`, 6 suspicious outbound C2 packets from `192.168.1.145 -> 198.51.100.77:4444`, and 6 SSH/WebGUI auth failures from `45.155.205.99`).
+- Sent synthetic pfSense traffic (5 background noise packets, 65 WAN port-scan packets across 12 ports from `198.51.100.42`, 6 suspicious outbound C2 packets from `192.168.1.145 -> 198.51.100.77:4444`, and 6 SSH/WebGUI auth failures from `203.0.113.99`).
 - Verified that Vector compressed the 65 WAN scan packets into 12 aggregated records in Loki, `MiniMax-M3` produced a `CRITICAL` security assessment in Italian (`1055` input tokens / `728` output tokens), stored the report in Loki, and delivered the alert to Telegram (`chat_id=123456789`). See [Raw Verification Snapshot](raw/2026-10-23-e2e-verification-minimax.md).
 
 ---
@@ -151,3 +151,17 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
   - Interactive `.env` creation (guiding user through cloud vs. local LLM options, Telegram token configuration, and auto-discovery testing).
   - One-click launch and automated synthetic log injection to verify end-to-end functionality in under 2 minutes.
   - Review feasibility, ergonomics, and maintenance trade-offs during the next session.
+
+---
+
+## [2026-10-24] governance | Mandatory Pre-Push Sensitive Data Anonymization Policy Codified & Verified
+
+- Codified a mandatory security and privacy policy governing all commits and pushes destined for GitHub:
+  - Added Section 3 (`Pre-Push Security & Sensitive Data Anonymization Policy`) to [`AGENTS.md`](../AGENTS.md).
+  - Added Section 4 (`Sensitive Data Anonymization & Privacy Standard`) to [`wiki/SCHEMA.md`](SCHEMA.md).
+- Enforced strict pre-push requirements:
+  - Zero tolerance for live API keys, tokens, webhook secrets, Telegram bot tokens, or numeric chat IDs.
+  - Strict anonymization of public WAN IPs, ISP gateways, and external threat/scanner IPs using RFC 5737 documentation subnets (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`) and RFC 3849 for IPv6.
+  - Special protection for `wiki/`: all historical traces, raw evidence (`wiki/raw/`), benchmark logs, and runbooks must undergo thorough sanitization before push.
+- Sanitized historical raw logs in [`wiki/raw/2026-10-24-local-llm-benchmark.md`](raw/2026-10-24-local-llm-benchmark.md) and [`wiki/raw/2026-10-23-e2e-verification-minimax.md`](raw/2026-10-23-e2e-verification-minimax.md).
+- Implemented automated regression testing (`test_regression_wiki_sensitive_data_anonymization`) in [`tests/test_regressions.py`](../tests/test_regressions.py) ensuring CI blocks any non-RFC5737/non-RFC1918 IPs or credential leaks in `wiki/`.

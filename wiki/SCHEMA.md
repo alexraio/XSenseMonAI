@@ -79,3 +79,18 @@ timestamp: YYYY-MM-DDTHH:MM:SSZ
 1. Verify that every `.md` file in `concepts/`, `components/`, `runbooks/`, and `raw/` is listed in `wiki/index.md`.
 2. Verify that all relative Markdown links (`[Label](../path/file.md)`) resolve to existing files.
 3. Verify that no concept claims contradict the current implementation in `analyzer/`, `config/`, or `docker-compose.yml`.
+4. Verify that no raw credentials, secrets, tokens, or un-anonymized public/internal IPs exist in any wiki file prior to pushing to remote repositories.
+
+---
+
+## 4. Sensitive Data Anonymization & Privacy Standard
+
+To ensure that the persistent knowledge base is safe for version control and remote publication (e.g. GitHub):
+1. **Zero Credential Exposure**: Never record live API keys, Telegram bot tokens, actual numeric chat IDs, passwords, or authentication headers in any wiki page. Always use placeholder tokens (`your-api-key`, `123456789`).
+2. **RFC 5737 IP Anonymization**: All public IPv4 addresses appearing in verification snapshots (`wiki/raw/`), architecture examples (`wiki/concepts/`), components (`wiki/components/`), or runbooks (`wiki/runbooks/`) MUST use RFC 5737 reserved documentation ranges:
+   - `192.0.2.0/24` (TEST-NET-1)
+   - `198.51.100.0/24` (TEST-NET-2)
+   - `203.0.113.0/24` (TEST-NET-3)
+   For IPv6, use RFC 3849 (`2001:db8::/32`).
+3. **Sanitized Raw Logs (`wiki/raw/`)**: When capturing empirical test results or model benchmarks, redact or anonymize all live hostnames, external WAN IPs, and internal topology specifics prior to committing.
+4. **Pre-Push Verification**: Every wiki addition or update must be audited for sensitive data before any `git push` to remote repositories.

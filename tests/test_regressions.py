@@ -753,3 +753,50 @@ def test_regression_openai_structured_output_fallback_on_rejection(tmp_path: Pat
     assert "response_format" not in second_body
     assert report.title == "Fallback Success"
 
+
+def test_regression_wiki_sensitive_data_anonymization() -> None:
+    """Verify that all markdown documents in wiki/ are free from sensitive data and un-anonymized public IPs."""
+    wiki_dir = REPO_ROOT / "wiki"
+    ip_pattern = re.compile(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b")
+    secret_patterns = [
+        re.compile(r"\b(?:sk-[a-zA-Z0-9_\-]{20,})\b"),
+        re.compile(r"\b(?:AAF-[a-zA-Z0-9_\-]{20,})\b"),
+        re.compile(r"\b(?:ghp_[a-zA-Z0-9]{36})\b"),
+    ]
+
+    for md_file in wiki_dir.rglob("*.md"):
+        content = md_file.read_text(encoding="utf-8")
+
+        # 1. Check for live API keys or tokens
+        for pattern in secret_patterns:
+            matches = pattern.findall(content)
+            assert not matches, f"Exposed live secret/token found in {md_file}: {matches}"
+
+        # 2. Check for un-anonymized public IPv4 addresses
+        for ip in set(ip_pattern.findall(content)):
+            parts = [int(p) for p in ip.split(".")]
+            if any(p > 255 for p in parts):
+                continue
+            if ip in ("0.0.0.0", "127.0.0.1"):
+                continue
+
+            # RFC 1918 Private Ranges (allowed for internal examples)
+            is_rfc1918 = (
+                parts[0] == 10
+                or (parts[0] == 172 and 16 <= parts[1] <= 31)
+                or (parts[0] == 192 and parts[1] == 168)
+            )
+
+            # RFC 5737 Documentation Ranges (mandatory for public examples)
+            # 192.0.2.0/24 (TEST-NET-1), 198.51.100.0/24 (TEST-NET-2), 203.0.113.0/24 (TEST-NET-3)
+            is_rfc5737 = (
+                (parts[0] == 192 and parts[1] == 0 and parts[2] == 2)
+                or (parts[0] == 198 and parts[1] == 51 and parts[2] == 100)
+                or (parts[0] == 203 and parts[1] == 0 and parts[2] == 113)
+            )
+
+            assert is_rfc1918 or is_rfc5737, (
+                f"Un-anonymized public IP address '{ip}' detected in {md_file.relative_to(REPO_ROOT)}. "
+                f"Public IPs must use RFC 5737 documentation subnets (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)."
+            )
+

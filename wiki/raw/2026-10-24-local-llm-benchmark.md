@@ -72,7 +72,7 @@ This document records the empirical results and performance metrics of live pfSe
   "key_findings": [
     "Rilevato movimento laterale interno bloccato tra l'host 172.16.30.16 e il target 192.168.50.117 sulle porte TCP 443 e 8080.",
     "Identificate scansioni aggressive da IP esterni con alta densità di porte colpite, provenienti principalmente dalla Francia (Contabo GmbH), Paesi Bassi (MEVSPACE) e Germania.",
-    "L'attività di scansione include una vasta gamma di porte TCP/UDP, con picchi significativi di traffico bloccato da IP come 207.180.192.206 (FR) e 109.205.211.203 (NL).",
+    "L'attività di scansione include una vasta gamma di porte TCP/UDP, con picchi significativi di traffico bloccato da IP come 203.0.113.206 (FR) e 198.51.100.203 (NL).",
     "L'anomalia Tier 1 indica tentativi di comunicazione tra segmenti interni o verso host sensibili, suggerendo una possibile compromissione di un dispositivo interno."
   ],
   "recommended_actions": [
@@ -100,9 +100,9 @@ This document records the empirical results and performance metrics of live pfSe
   "title": "Rilevate Scansioni di Porte Intensive da IP Pubblici Multipli",
   "executive_summary": "Nelle ultime 4 ore sono state rilevate numerose attività di ricognizione da indirizzi IP esterni verso porte sensibili (es. Telnet, RDP, SSH, DB). La totalità del traffico non autorizzato è stata respinta dalla WAN, ma la persistenza e il numero di porte distinte indicano scansioni automatizzate coordinate.",
   "key_findings": [
-    "IP 185.220.101.42 (DE · Hetzner) ha effettuato 82 tentativi di connessione bloccati su 14 porte distinte (inclusi 23/telnet, 3389/rdp, 8080/http-alt).",
-    "IP 207.180.192.206 (FR · Contabo) ha generato 110 hit bloccati con pattern di port scanning su servizi web e database.",
-    "IP 109.205.211.203 (NL · MEVSPACE) ha mirato persistentemente la porta 5060 (SIP/VoIP) e 8443."
+    "IP 198.51.100.42 (DE · Hetzner) ha effettuato 82 tentativi di connessione bloccati su 14 porte distinte (inclusi 23/telnet, 3389/rdp, 8080/http-alt).",
+    "IP 203.0.113.206 (FR · Contabo) ha generato 110 hit bloccati con pattern di port scanning su servizi web e database.",
+    "IP 198.51.100.203 (NL · MEVSPACE) ha mirato persistentemente la porta 5060 (SIP/VoIP) e 8443."
   ],
   "recommended_actions": [
     "Aggiungere le subnet degli scanner ricorrenti alla blocklist pfSense o alias Drop-All.",
@@ -110,9 +110,9 @@ This document records the empirical results and performance metrics of live pfSe
     "Continuare il monitoraggio dell'host interno 172.16.30.16 per escludere comunicazioni non autorizzate."
   ],
   "suspicious_ips": [
-    "185.220.101.42",
-    "207.180.192.206",
-    "109.205.211.203"
+    "198.51.100.42",
+    "203.0.113.206",
+    "198.51.100.203"
   ],
   "model_used": "qwen/qwen3.5-9b",
   "input_tokens": 5508,
