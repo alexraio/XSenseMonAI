@@ -128,3 +128,16 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
   - Enriched 15 aggressive WAN offenders (Tier 3) + 2 outbound flows (Tier 1) with GeoIP and ASN.
   - Ingested 5508 input tokens into LM Studio, generated 916 output tokens of high-quality Italian security analysis via Structured Output, successfully pushed to Loki (`204 No Content`), and delivered to Telegram (`200 OK`).
 - Added 2 regression tests (`test_regression_openai_structured_output_json_schema`, `test_regression_openai_structured_output_fallback_on_rejection`) in [`tests/test_regressions.py`](../tests/test_regressions.py). All 19 tests pass cleanly.
+
+---
+
+## [2026-10-24] benchmark | Evaluated Local LLMs on Apple Silicon (Gemma 4B/12B, Qwen 9B) & Ingested Benchmark Page
+
+- Conducted exhaustive live comparative benchmark of local LLMs hosted in LM Studio (Apple Silicon Mac) processing real pfSense firewall telemetry against cloud reference `MiniMax-M3`.
+- Tested models:
+  1. `google/gemma-4-e4b` (4B): Fast lightweight option (~39s, 300 output tokens), correctly identified critical anomalies.
+  2. `qwen/qwen3.5-9b` (9B): Outstanding detail (~1m 19s for 15 offenders, 916 output tokens), granular per-port and GeoIP breakdown.
+  3. `google/gemma-4-12b` (12B with Thinking): High execution time spent on internal thought tokens, choking output budget (112 tokens, empty findings).
+  4. `google/gemma-4-12b` (12B without Thinking): Benchmark winner for incident response (~1m 13s, 498 output tokens), producing actionable remediation (host isolation of `172.16.30.16`, target mapping `192.168.50.117`, VLAN ACL reinforcement).
+- Key Architectural Insight: Disabling internal reasoning/thinking when using strict OpenAI Structured Output (`json_schema`) increases usable payload tokens by +345% and eliminates JSON schema truncation.
+- Ingested immutable benchmark record in [`wiki/raw/2026-10-24-local-llm-benchmark.md`](raw/2026-10-24-local-llm-benchmark.md) and linked it in [`wiki/index.md`](index.md) and [`wiki/components/ai-analyzer-minimax.md`](components/ai-analyzer-minimax.md).

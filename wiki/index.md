@@ -31,3 +31,4 @@ Welcome to the **PfsenseMon** LLM Wiki & Open Knowledge Format (OKF) catalog. Ag
 ## Raw Evidence & Verification Snapshots (`raw/`)
 
 - [2026-10-23 End-to-End Live Verification (MiniMax-M3 + Telegram)](raw/2026-10-23-e2e-verification-minimax.md) — Immutable log trace and JSON output from the first live end-to-end test across Vector, Loki, `MiniMax-M3`, and Telegram.
+- [2026-10-24 Local LLM Benchmark & Comparison (LM Studio)](raw/2026-10-24-local-llm-benchmark.md) — Empirical benchmark and comparative analysis of local LLMs (Gemma 4B, Qwen 9B, Gemma 12B) and cloud MiniMax-M3 running live pfSense security telemetry with Structured Output.

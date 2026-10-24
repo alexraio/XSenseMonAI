@@ -73,3 +73,4 @@ If `TELEGRAM_CHAT_ID` is initially set to a non-numeric string (such as the bot'
 
 - [Zero-Token Pre-Filter & Deduplication](../concepts/zero-token-filter.md)
 - [2026-10-23 End-to-End Live Verification](../raw/2026-10-23-e2e-verification-minimax.md)
+- [2026-10-24 Local LLM Benchmark & Comparison (LM Studio)](../raw/2026-10-24-local-llm-benchmark.md)
