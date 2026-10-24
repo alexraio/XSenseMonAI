@@ -13,6 +13,7 @@ from types import FrameType
 from .ai_analyst import AnthropicSOCAnalyst
 from .config import AppConfig
 from .filter_engine import ZeroTokenFilterEngine
+from .geoip import enrich_evaluation_with_geoip
 from .loki_client import LokiClient
 from .notifier import TelegramNotifier
 
@@ -84,9 +85,14 @@ def run_analysis_cycle(
         "; ".join(evaluation.trigger_reasons),
     )
 
+    if config.enable_geoip:
+        enrich_evaluation_with_geoip(evaluation)
+
     if dry_run:
         logger.info(
-            "[DRY-RUN] Would call Anthropic API with %d Tier-1, %d Tier-2, %d Tier-3 items.",
+            "[DRY-RUN] Would call LLM (%s/%s) with %d Tier-1, %d Tier-2, %d Tier-3 items.",
+            config.llm_provider,
+            config.llm_model,
             len(evaluation.tier1_anomalies),
             len(evaluation.tier2_events),
             len(evaluation.tier3_offenders),
@@ -153,10 +159,12 @@ def main() -> int:
     killer = GracefulKiller()
     interval_sec = config.analysis_interval_minutes * 60
     logger.info(
-        "PfsenseMon Analyzer daemon started (interval=%dm, model=%s, api_base=%s, loki=%s)",
+        "PfsenseMon Analyzer daemon started (interval=%dm, provider=%s, model=%s, api_base=%s, geoip=%s, loki=%s)",
         config.analysis_interval_minutes,
-        config.anthropic_model,
-        config.anthropic_base_url,
+        config.llm_provider,
+        config.llm_model,
+        config.llm_base_url,
+        config.enable_geoip,
         config.loki_url,
     )
 

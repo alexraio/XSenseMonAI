@@ -9,7 +9,8 @@
   - 🟠 **Tier 2 (`tier_2_access_and_auth`)**: Captures 100% of pfSense authentication events (`sshd`, WebGUI `webConfigurator`, OpenVPN, WireGuard, IPsec) and inbound WAN `pass` connections.
   - 🟡 **Tier 3 (`tier_3_wan_blocked`)**: Pre-aggregates repetitive inbound WAN `block` events in 60-second windows by `(src_ip, dst_port, proto)` using Vector's `reduce` transform—cutting storage and token noise by ~90% while preserving full statistical visibility (`hit_count`).
 - **Zero-Token Pre-Filter Engine**: The Python Analyzer queries Loki every 15 minutes and evaluates thresholds locally. If only harmless Internet background noise is present, **0 LLM API tokens are spent**.
-- **MiniMax & Anthropic-Compatible API Support**: Supports both **MiniMax** (`https://api.minimax.io/anthropic` with `MiniMax-M3` / `MiniMax-M2.5`) and official **Anthropic Claude** models out of the box via `ANTHROPIC_BASE_URL`, automatically filtering reasoning `thinking` blocks.
+- **Multi-Provider & Local LLM Support**: Supports **MiniMax / Anthropic** (`LLM_PROVIDER=anthropic`), **Local Ollama** (`LLM_PROVIDER=ollama`, zero API key required), **OpenRouter** (`LLM_PROVIDER=openrouter`), and **OpenAI / LM Studio / vLLM** (`LLM_PROVIDER=openai`), automatically stripping `<think>...</think>` blocks from local/reasoning models.
+- **Post-Filter GeoIP & ASN Enrichment**: Automatically enriches anomalous external IPs (Tier 1, Tier 2, Tier 3) with **Country, City, ISP, and ASN** metadata only when an alert triggers (`ENABLE_GEOIP=true`), injecting attribution into both the LLM prompt and Telegram notifications.
 - **Anti-Spam Deduplication, Telegram Auto-Discovery & Raw Fallback**: Suppresses repeated alerts for the same ongoing scanner (configurable TTL cooldown), automatically discovers your numeric Telegram `chat_id` via `getUpdates` when you press `/start` on your bot, and sends a raw statistical Telegram alert if the AI API is temporarily unreachable.
 - **Hermes Agent SOC Integration**: Includes a zero-dependency Python CLI tool and `SKILL.md` for your isolated Ubuntu **Hermes Agent**, enabling on-demand conversational threat hunting over Loki (`TCP 3100`).
 - **Self-Maintaining LLM Wiki (Karpathy Pattern + Google OKF)**: Includes a structured knowledge base under [`wiki/`](wiki/index.md) following Andrej Karpathy's *LLM Wiki* pattern and Google Cloud's *Open Knowledge Format (`okf/SPEC.md`)*, audited automatically by `pytest`.
@@ -120,10 +121,13 @@ Edit `.env` with your credentials and network preferences:
 
 | Variable | Description | Default / Example |
 | :--- | :--- | :--- |
-| `ANTHROPIC_API_KEY` | Your MiniMax or Anthropic API secret key | `eyJ...` or `sk-ant-...` |
-| `ANTHROPIC_BASE_URL` | Anthropic-compatible base URL (MiniMax or Anthropic) | `https://api.minimax.io/anthropic` |
-| `ANTHROPIC_MODEL` | Model used for security analysis | `MiniMax-M3` (or `MiniMax-M2.5`, `claude-sonnet-4-5`) |
+| `LLM_PROVIDER` | AI backend (`anthropic`, `ollama`, `openai`, `openrouter`) | `anthropic` |
+| `ANTHROPIC_API_KEY` | MiniMax or Anthropic API key (or set `LLM_API_KEY`) | `eyJ...` or `sk-ant-...` |
+| `ANTHROPIC_BASE_URL` | Anthropic-compatible base URL (or set `LLM_BASE_URL`) | `https://api.minimax.io/anthropic` |
+| `ANTHROPIC_MODEL` | Model name (or set `LLM_MODEL` for Ollama/OpenRouter) | `MiniMax-M3` (or `qwen2.5:14b`, `google/gemini-2.5-flash`) |
+| `LLM_TIMEOUT_SECONDS` | HTTP timeout for LLM inference (useful for local models) | `90` |
 | `AI_REPORT_LANGUAGE` | Language used by the AI for report summaries | `Italian` |
+| `ENABLE_GEOIP` | Enrich anomalous external IPs with Country, ISP, and ASN | `true` |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot token from `@BotFather` | `123456:AAF...` |
 | `TELEGRAM_CHAT_ID` | Numeric Telegram chat ID (or bot username for auto-discovery) | `123456789` |
 | `VECTOR_SYSLOG_PORT` | UDP port exposed for pfSense syslog | `5140` |

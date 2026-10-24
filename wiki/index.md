@@ -21,7 +21,7 @@ Welcome to the **PfsenseMon** LLM Wiki & Open Knowledge Format (OKF) catalog. Ag
 
 - [Vector Syslog & VRL Pipeline](components/vector-pipeline.md) — Ingestion on `UDP 5140`, CSV `filterlog` parsing, RFC1918 IP detection, and 60-second `reduce` aggregation (`config/vector/vector.yaml`).
 - [Grafana Loki & Dashboard Integration](components/loki-and-grafana.md) — Single-binary TSDB storage with 30-day retention (`config/loki/loki-config.yaml`) and ready-to-import dashboard for the existing Grafana server (`config/grafana/dashboard-pfsense.json`).
-- [Python AI Analyzer & MiniMax Integration](components/ai-analyzer-minimax.md) — Custom Python 3.12 service using the Anthropic-compatible SDK with `MiniMax-M3`, `ANTHROPIC_BASE_URL` normalization, and Telegram Bot auto-discovery (`analyzer/`).
+- [Python AI Analyzer, Multi-Provider LLM & GeoIP Enrichment](components/ai-analyzer-minimax.md) — Custom Python 3.12 service supporting `anthropic` (MiniMax/Claude), `ollama` (local), `openai` (LM Studio/vLLM/OpenAI), and `openrouter`, plus post-filter GeoIP/ASN enrichment and Telegram Bot alerting (`analyzer/`).
 - [Hermes Agent Interactive SOC Skill](components/hermes-agent-skill.md) — Zero-dependency CLI tool (`hermes_skill/query_pfsense_loki.py`) allowing the isolated Ubuntu Hermes Agent to query Loki over `TCP 3100`.
 
 ## Operational Runbooks (`runbooks/`)

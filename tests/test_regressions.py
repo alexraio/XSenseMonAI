@@ -23,9 +23,16 @@ import httpx
 from src.ai_analyst import AnthropicSOCAnalyst
 from src.config import AppConfig
 from src.filter_engine import ZeroTokenFilterEngine
+from src.geoip import enrich_evaluation_with_geoip
 from src.loki_client import LokiClient
 from src.main import run_analysis_cycle
-from src.models import AISecurityReport, FilterEvaluationResult, NormalizedLogEvent
+from src.models import (
+    AISecurityReport,
+    FilterEvaluationResult,
+    NormalizedLogEvent,
+    OutboundAnomalySummary,
+    WanOffenderSummary,
+)
 from src.notifier import TelegramNotifier
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -403,3 +410,346 @@ def test_regression_hermes_skill_geoip_batch_enrichment() -> None:
     assert res["109.205.211.205"]["country"] == "The Netherlands"
     assert res["109.205.211.205"]["country_code"] == "NL"
     assert res["109.205.211.205"]["asn"] == "AS201814 MEVSPACE sp. z o.o."
+
+
+def test_regression_ollama_local_provider_no_api_key_and_think_tags(tmp_path: Path) -> None:
+    """Verify Ollama works without an API key, appends /v1, and strips <think>...</think> blocks."""
+    cfg = AppConfig(
+        llm_provider="ollama",
+        llm_base_url="http://localhost:11434",
+        llm_model="deepseek-r1:14b",
+        state_file_path=tmp_path / "dedup.json",
+    )
+    assert cfg.llm_base_url == "http://localhost:11434/v1"
+    analyst = AnthropicSOCAnalyst(config=cfg)
+    assert analyst.client is None
+
+    evaluation = FilterEvaluationResult(
+        window_start=datetime.now(tz=UTC),
+        window_end=datetime.now(tz=UTC),
+        should_invoke_ai=True,
+        trigger_reasons=["Tier 1 test"],
+    )
+
+    ollama_payload = {
+        "choices": [
+            {
+                "message": {
+                    "content": (
+                        "<think>\nLet me analyze the firewall telemetry first...\n"
+                        "Internal host 192.168.1.50 connected to 4444.\n</think>\n"
+                        '{"severity": "CRITICAL", "title": "Ollama Local Detection", '
+                        '"executive_summary": "Rilevato C2 da modello locale.", '
+                        '"key_findings": ["192.168.1.50 -> 4444"], '
+                        '"recommended_actions": ["Isolare host"], '
+                        '"suspicious_ips": ["192.168.1.50"]}'
+                    )
+                }
+            }
+        ],
+        "usage": {"prompt_tokens": 310, "completion_tokens": 95},
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.json.return_value = ollama_payload
+
+    with patch("httpx.Client.post", return_value=mock_resp) as mock_post:
+        report = analyst.analyze(evaluation)
+
+    assert mock_post.call_count == 1
+    called_url = mock_post.call_args.args[0]
+    assert called_url == "http://localhost:11434/v1/chat/completions"
+    assert report.severity == "CRITICAL"
+    assert report.title == "Ollama Local Detection"
+    assert report.model_used == "deepseek-r1:14b"
+    assert report.input_tokens == 310
+    assert report.output_tokens == 95
+
+
+def test_regression_openrouter_provider_headers_and_endpoint(tmp_path: Path) -> None:
+    """Verify OpenRouter sends HTTP-Referer and X-Title headers to /v1/chat/completions."""
+    cfg = AppConfig(
+        llm_provider="openrouter",
+        llm_api_key="sk-or-v1-test-key",
+        llm_model="google/gemini-2.5-flash",
+        state_file_path=tmp_path / "dedup.json",
+    )
+    assert cfg.llm_base_url == "https://openrouter.ai/api/v1"
+    analyst = AnthropicSOCAnalyst(config=cfg)
+
+    evaluation = FilterEvaluationResult(
+        window_start=datetime.now(tz=UTC),
+        window_end=datetime.now(tz=UTC),
+        should_invoke_ai=True,
+        trigger_reasons=["Tier 3 scan"],
+    )
+
+    or_payload = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "severity": "WARNING",
+                            "title": "OpenRouter Scan Alert",
+                            "executive_summary": "Port scan detected via OpenRouter.",
+                            "key_findings": ["Scan on 12 ports"],
+                            "recommended_actions": ["Monitor IP"],
+                            "suspicious_ips": ["185.220.101.42"],
+                        }
+                    )
+                }
+            }
+        ],
+        "usage": {"prompt_tokens": 450, "completion_tokens": 110},
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.json.return_value = or_payload
+
+    with patch("httpx.Client.post", return_value=mock_resp) as mock_post:
+        report = analyst.analyze(evaluation)
+
+    called_url = mock_post.call_args.args[0]
+    called_headers = mock_post.call_args.kwargs["headers"]
+    assert called_url == "https://openrouter.ai/api/v1/chat/completions"
+    assert called_headers["Authorization"] == "Bearer sk-or-v1-test-key"
+    assert called_headers["X-Title"] == "PfsenseMon"
+    assert "HTTP-Referer" in called_headers
+    assert report.severity == "WARNING"
+    assert report.model_used == "google/gemini-2.5-flash"
+
+
+def test_regression_openai_local_vs_cloud_api_key_requirement(tmp_path: Path) -> None:
+    """Verify local OpenAI-compatible endpoints (LM Studio) work without API key while cloud requires one."""
+    local_cfg = AppConfig(
+        llm_provider="openai",
+        llm_base_url="http://host.docker.internal:1234/v1",
+        llm_model="lmstudio-community/qwen2.5-7b",
+        state_file_path=tmp_path / "dedup1.json",
+    )
+    local_analyst = AnthropicSOCAnalyst(config=local_cfg)
+    assert not local_analyst._requires_api_key()
+
+    cloud_cfg = AppConfig(
+        llm_provider="openai",
+        llm_base_url="https://api.openai.com/v1",
+        llm_model="gpt-4o-mini",
+        state_file_path=tmp_path / "dedup2.json",
+    )
+    cloud_analyst = AnthropicSOCAnalyst(config=cloud_cfg)
+    assert cloud_analyst._requires_api_key()
+
+
+def test_regression_analyzer_geoip_enrichment_and_telegram_rendering(tmp_path: Path) -> None:
+    """Verify enrich_evaluation_with_geoip populates GeoIPInfo and TelegramNotifier renders it."""
+    evaluation = FilterEvaluationResult(
+        window_start=datetime.now(tz=UTC),
+        window_end=datetime.now(tz=UTC),
+        should_invoke_ai=True,
+        trigger_reasons=["Tier 1 & Tier 3 anomalies"],
+        tier1_anomalies=[
+            OutboundAnomalySummary(
+                src_ip="192.168.1.145",
+                dst_ip="198.51.100.77",
+                dst_port="4444",
+                proto="tcp",
+                action="block",
+                sub_type="outbound_blocked",
+                total_hits=4,
+            )
+        ],
+        tier3_offenders=[
+            WanOffenderSummary(
+                src_ip="185.220.101.42",
+                total_blocked_hits=65,
+                distinct_ports_count=12,
+                targeted_ports=["22", "80", "443"],
+                protocols=["tcp"],
+                is_port_scanner=True,
+                is_high_volume=True,
+            )
+        ],
+    )
+
+    fake_batch = [
+        {
+            "status": "success",
+            "query": "198.51.100.77",
+            "country": "United States",
+            "countryCode": "US",
+            "city": "Ashburn",
+            "isp": "Example Cloud LLC",
+            "org": "Example Cloud",
+            "as": "AS64500 Example Cloud LLC",
+        },
+        {
+            "status": "success",
+            "query": "185.220.101.42",
+            "country": "Germany",
+            "countryCode": "DE",
+            "city": "Falkenstein",
+            "isp": "Hetzner Online GmbH",
+            "org": "Hetzner",
+            "as": "AS24940 Hetzner Online GmbH",
+        },
+    ]
+
+    mock_geo_resp = MagicMock()
+    mock_geo_resp.raise_for_status.return_value = None
+    mock_geo_resp.json.return_value = fake_batch
+
+    with patch("httpx.Client.post", return_value=mock_geo_resp):
+        enrich_evaluation_with_geoip(evaluation)
+
+    assert evaluation.tier1_anomalies[0].dst_geoip is not None
+    assert evaluation.tier1_anomalies[0].dst_geoip.country_code == "US"
+    assert evaluation.tier3_offenders[0].src_geoip is not None
+    assert (
+        evaluation.tier3_offenders[0].src_geoip.short_label()
+        == "DE · Hetzner Online GmbH · AS24940"
+    )
+
+    cfg = _base_config(tmp_path)
+    notifier = TelegramNotifier(config=cfg)
+    report = AISecurityReport(
+        severity="CRITICAL",
+        title="GeoIP Enriched Alert",
+        executive_summary="Detected scan and C2.",
+        key_findings=["Scan from DE"],
+        recommended_actions=["Block IP"],
+        suspicious_ips=["185.220.101.42", "192.168.1.145"],
+        model_used="MiniMax-M3",
+        input_tokens=500,
+        output_tokens=200,
+    )
+
+    sent_messages: list[str] = []
+
+    def fake_send_html(text: str) -> bool:
+        sent_messages.append(text)
+        return True
+
+    with patch.object(notifier, "_send_html_message", side_effect=fake_send_html):
+        notifier.send_ai_report(report, evaluation)
+        notifier.send_raw_fallback_alert(evaluation, "Simulated timeout")
+
+    assert len(sent_messages) == 2
+    assert "<code>185.220.101.42</code> (DE · Hetzner Online GmbH · AS24940)" in sent_messages[0]
+    assert "<code>198.51.100.77:4444/tcp</code> (US · Example Cloud LLC · AS64500)" in sent_messages[1]
+    assert "<code>185.220.101.42</code> (DE · Hetzner Online GmbH · AS24940)" in sent_messages[1]
+
+
+def test_regression_openai_structured_output_json_schema(tmp_path: Path) -> None:
+    """Verify OpenAI-compatible endpoints receive json_schema response_format when enabled."""
+    cfg = AppConfig(
+        llm_provider="openai",
+        llm_base_url="http://host.docker.internal:1234/v1",
+        llm_model="qwen/qwen3.5-9b",
+        llm_structured_output=True,
+        state_file_path=tmp_path / "dedup.json",
+    )
+    analyst = AnthropicSOCAnalyst(config=cfg)
+
+    evaluation = FilterEvaluationResult(
+        window_start=datetime.now(tz=UTC),
+        window_end=datetime.now(tz=UTC),
+        should_invoke_ai=True,
+        trigger_reasons=["Structured Output Test"],
+    )
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "severity": "WARNING",
+                            "title": "Structured Output Title",
+                            "executive_summary": "Schema-enforced summary.",
+                            "key_findings": ["Strict JSON received"],
+                            "recommended_actions": ["No action required"],
+                            "suspicious_ips": ["198.51.100.23"],
+                        }
+                    )
+                }
+            }
+        ],
+        "usage": {"prompt_tokens": 120, "completion_tokens": 60},
+    }
+
+    with patch("httpx.Client.post", return_value=mock_resp) as mock_post:
+        report = analyst.analyze(evaluation)
+
+    assert mock_post.call_count == 1
+    called_body = mock_post.call_args.kwargs["json"]
+    assert "response_format" in called_body
+    assert called_body["response_format"]["type"] == "json_schema"
+    assert called_body["response_format"]["json_schema"]["strict"] is True
+    assert report.severity == "WARNING"
+    assert report.title == "Structured Output Title"
+
+
+def test_regression_openai_structured_output_fallback_on_rejection(tmp_path: Path) -> None:
+    """Verify graceful fallback and retry without response_format if provider rejects json_schema with 400."""
+    cfg = AppConfig(
+        llm_provider="openai",
+        llm_base_url="http://host.docker.internal:1234/v1",
+        llm_model="legacy-model",
+        llm_structured_output=True,
+        state_file_path=tmp_path / "dedup.json",
+    )
+    analyst = AnthropicSOCAnalyst(config=cfg)
+
+    evaluation = FilterEvaluationResult(
+        window_start=datetime.now(tz=UTC),
+        window_end=datetime.now(tz=UTC),
+        should_invoke_ai=True,
+        trigger_reasons=["Fallback Test"],
+    )
+
+    # First attempt: 400 rejection on response_format
+    first_resp = MagicMock()
+    first_resp.status_code = 400
+    first_resp.text = "Error: 'response_format' is unsupported for this model."
+
+    # Second attempt: 200 OK without response_format
+    second_resp = MagicMock()
+    second_resp.status_code = 200
+    second_resp.raise_for_status.return_value = None
+    second_resp.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "severity": "INFO",
+                            "title": "Fallback Success",
+                            "executive_summary": "Parsed without structured output.",
+                            "key_findings": ["Recovered cleanly"],
+                            "recommended_actions": [],
+                            "suspicious_ips": [],
+                        }
+                    )
+                }
+            }
+        ],
+        "usage": {"prompt_tokens": 100, "completion_tokens": 40},
+    }
+
+    with patch("httpx.Client.post", side_effect=[first_resp, second_resp]) as mock_post:
+        report = analyst.analyze(evaluation)
+
+    assert mock_post.call_count == 2
+    # Verify second call removed response_format
+    first_body = mock_post.call_args_list[0].kwargs["json"]
+    second_body = mock_post.call_args_list[1].kwargs["json"]
+    assert "response_format" in first_body
+    assert "response_format" not in second_body
+    assert report.title == "Fallback Success"
+

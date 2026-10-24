@@ -101,3 +101,30 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
 
 - Added `logging` rotation policy (`driver: "json-file"`, `max-size: "10m"`, `max-file: "3"`) to `loki`, `vector`, and `analyzer` services in [`docker-compose.yml`](../docker-compose.yml) to cap host container logs at 30 MB per service alongside Loki's 30-day (`720h`) TSDB compactor retention and Vector's 256 MB disk buffer cap.
 - Updated [Grafana Loki & Dashboard Integration](components/loki-and-grafana.md) and [`tests/test_regressions.py`](../tests/test_regressions.py).
+
+---
+
+## [2026-10-24] feat | Added Multi-Provider / Local LLM Support & Analyzer GeoIP Enrichment (`feat/local-llm-provider`)
+
+- Completed structured `brainstorming` workflow and implemented multi-provider LLM support in [`analyzer/src/config.py`](../analyzer/src/config.py) and [`analyzer/src/ai_analyst.py`](../analyzer/src/ai_analyst.py):
+  - Added `LLM_PROVIDER` (`anthropic`, `ollama`, `openai`, `openrouter`) with 100% backward compatibility for existing `ANTHROPIC_*` `.env` files.
+  - Added `/v1/chat/completions` client via `httpx` supporting local **Ollama** (`http://host.docker.internal:11434/v1` without API key), **LM Studio / vLLM / OpenAI**, and **OpenRouter** (`https://openrouter.ai/api/v1` with `HTTP-Referer` and `X-Title` headers).
+  - Added `<think>...</think>` block stripping in `_parse_json_response()` for reasoning models (`deepseek-r1`, `qwen3`, etc.) and `extra_hosts: ["host.docker.internal:host-gateway"]` in [`docker-compose.yml`](../docker-compose.yml).
+- Implemented post-filter GeoIP & ASN enrichment in [`analyzer/src/geoip.py`](../analyzer/src/geoip.py) (`enrich_evaluation_with_geoip`), [`analyzer/src/models.py`](../analyzer/src/models.py) (`GeoIPInfo`), [`analyzer/src/main.py`](../analyzer/src/main.py), and [`analyzer/src/notifier.py`](../analyzer/src/notifier.py):
+  - Triggers only when `should_invoke_ai == True` and `ENABLE_GEOIP=true`, enriching both the LLM prompt payload and Telegram alerts (`send_ai_report` + `send_raw_fallback_alert`).
+- Added 4 regression tests in [`tests/test_regressions.py`](../tests/test_regressions.py) and updated [Python AI Analyzer, Multi-Provider LLM & GeoIP Enrichment](components/ai-analyzer-minimax.md), [`DESIGN.md`](../DESIGN.md), and [`README.md`](../README.md).
+
+---
+
+## [2026-10-24] feat | Implemented OpenAI Strict Structured Output (`json_schema`) & LM Studio 16k Context Verification
+
+- Implemented OpenAI-compatible `response_format` with `type: "json_schema"`, `strict: True`, and `SECURITY_REPORT_JSON_SCHEMA` in [`analyzer/src/ai_analyst.py`](../analyzer/src/ai_analyst.py):
+  - Guarantees 100% compliant JSON responses matching `AISecurityReport` fields without conversational prelude or unclosed JSON blocks.
+  - Added automatic graceful fallback: if an endpoint returns HTTP 400 rejecting `json_schema`, the request is automatically retried without `response_format`.
+  - Added `llm_structured_output: bool = True` in [`analyzer/src/config.py`](../analyzer/src/config.py) and `LLM_STRUCTURED_OUTPUT=true` in [`.env.example`](../.env.example).
+- Increased `MAX_PROMPT_ITEMS_PER_TIER=15` in [`.env`](../.env) to leverage larger context windows (16384 tokens) in LM Studio.
+- Completed live end-to-end verification with `qwen/qwen3.5-9b` (LM Studio on macOS host):
+  - Processed 3831 real pfSense firewall events from Loki.
+  - Enriched 15 aggressive WAN offenders (Tier 3) + 2 outbound flows (Tier 1) with GeoIP and ASN.
+  - Ingested 5508 input tokens into LM Studio, generated 916 output tokens of high-quality Italian security analysis via Structured Output, successfully pushed to Loki (`204 No Content`), and delivered to Telegram (`200 OK`).
+- Added 2 regression tests (`test_regression_openai_structured_output_json_schema`, `test_regression_openai_structured_output_fallback_on_rejection`) in [`tests/test_regressions.py`](../tests/test_regressions.py). All 19 tests pass cleanly.

@@ -64,6 +64,8 @@ services:
       - .env
     environment:
       - LOKI_INTERNAL_URL=http://loki:3100
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - analyzer_state:/app/state
       - ./analyzer/src:/app/src:ro

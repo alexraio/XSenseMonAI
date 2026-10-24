@@ -35,6 +35,33 @@ class NormalizedLogEvent(BaseModel):
     raw_log: str = ""
 
 
+class GeoIPInfo(BaseModel):
+    """Geographical and ASN attribution metadata for an IP address."""
+
+    country: str = "Unknown"
+    country_code: str = ""
+    city: str = ""
+    isp: str = ""
+    asn: str = ""
+
+    def short_label(self) -> str:
+        """Return a compact human-readable label (e.g., 'DE · Hetzner · AS24940')."""
+        if self.country_code == "LAN":
+            return "LAN"
+        parts: list[str] = []
+        if self.country_code:
+            parts.append(self.country_code)
+        elif self.country and self.country != "Unknown":
+            parts.append(self.country)
+        if self.isp:
+            parts.append(self.isp)
+        if self.asn:
+            asn_token = self.asn.split()[0] if self.asn else ""
+            if asn_token and asn_token not in self.isp:
+                parts.append(asn_token)
+        return " · ".join(parts)
+
+
 class OutboundAnomalySummary(BaseModel):
     """Aggregated Tier 1 suspicious outbound or lateral traffic per internal source IP."""
 
@@ -46,6 +73,7 @@ class OutboundAnomalySummary(BaseModel):
     sub_type: str
     total_hits: int
     sample_tcp_flags: str = ""
+    dst_geoip: GeoIPInfo | None = None
 
 
 class AuthOrAccessSummary(BaseModel):
@@ -58,6 +86,7 @@ class AuthOrAccessSummary(BaseModel):
     proto: str
     total_hits: int
     sample_raw_logs: list[str] = Field(default_factory=list)
+    src_geoip: GeoIPInfo | None = None
 
 
 class WanOffenderSummary(BaseModel):
@@ -70,6 +99,7 @@ class WanOffenderSummary(BaseModel):
     protocols: list[str] = Field(default_factory=list)
     is_port_scanner: bool = False
     is_high_volume: bool = False
+    src_geoip: GeoIPInfo | None = None
 
 
 class FilterEvaluationResult(BaseModel):
@@ -84,6 +114,7 @@ class FilterEvaluationResult(BaseModel):
     tier3_offenders: list[WanOffenderSummary] = Field(default_factory=list)
     total_raw_wan_blocks: int = 0
     suppressed_by_dedup_count: int = 0
+    ip_geoip_map: dict[str, GeoIPInfo] = Field(default_factory=dict)
 
 
 class AISecurityReport(BaseModel):
