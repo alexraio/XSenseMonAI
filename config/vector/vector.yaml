@@ -1,0 +1,284 @@
+# ==============================================================================
+# PfsenseMon — Vector Pipeline Configuration
+# 1. Ingests pfSense Syslog over UDP 5140
+# 2. Parses filterlog CSV & system auth logs via VRL
+# 3. Classifies into 3 Security Tiers
+# 4. Aggregates Tier 3 (WAN Blocked) in 60-second windows to cut noise by ~90%
+# 5. Ships structured JSON to Grafana Loki with disk-backed buffering
+# ==============================================================================
+
+data_dir: "/var/lib/vector"
+
+sources:
+  pfsense_syslog:
+    type: socket
+    address: "0.0.0.0:5140"
+    mode: udp
+    max_length: 65536
+
+transforms:
+  parse_and_classify:
+    type: remap
+    inputs:
+      - pfsense_syslog
+    drop_on_abort: true
+    source: |
+      raw_msg = to_string(.message) ?? ""
+      raw = strip_whitespace(raw_msg)
+      if raw == "" {
+        abort
+      }
+
+      # Local strongly-typed string variables for VRL type safety
+      src_ip = "unknown"
+      dst_ip = "unknown"
+      src_port = "0"
+      dst_port = "0"
+      proto = "unknown"
+      iface = "unknown"
+      reason = "match"
+      action = "unknown"
+      direction = "unknown"
+      tcp_flags = ""
+      rule_tracker = ""
+      security_tier = "unknown"
+      sub_type = "unknown"
+      raw_log = ""
+
+      # ------------------------------------------------------------------------
+      # Branch A: pfSense Packet Filter Logs (filterlog CSV format)
+      # ------------------------------------------------------------------------
+      if contains(raw, "filterlog") {
+        matched, err = parse_regex(raw, r'filterlog(?:\[\d+\])?:\s*(?P<csv>.*)$')
+        if err != null {
+          abort
+        }
+
+        csv_str = to_string(matched.csv)
+        parts = split(csv_str, ",")
+        if length(parts) < 20 {
+          abort
+        }
+
+        rule_tracker = to_string(parts[3])
+        iface = downcase(to_string(parts[4]))
+        reason = downcase(to_string(parts[5]))
+        action = downcase(to_string(parts[6]))
+        direction = downcase(to_string(parts[7]))
+        ip_ver = to_string(parts[8])
+
+        if ip_ver == "4" {
+          proto = downcase(to_string(parts[16]))
+          src_ip = to_string(parts[18])
+          dst_ip = to_string(parts[19])
+          if (proto == "tcp" || proto == "udp") && length(parts) >= 22 {
+            src_port = to_string(parts[20])
+            dst_port = to_string(parts[21])
+          }
+          if proto == "tcp" && length(parts) >= 24 {
+            tcp_flags = to_string(parts[23])
+          }
+        } else if ip_ver == "6" {
+          proto = downcase(to_string(parts[12]))
+          src_ip = to_string(parts[15])
+          dst_ip = to_string(parts[16])
+          if (proto == "tcp" || proto == "udp") && length(parts) >= 19 {
+            src_port = to_string(parts[17])
+            dst_port = to_string(parts[18])
+          }
+          if proto == "tcp" && length(parts) >= 21 {
+            tcp_flags = to_string(parts[20])
+          }
+        } else {
+          abort
+        }
+
+        # Drop link-local IPv6, multicast, local broadcast, and IGMP chatter
+        if starts_with(src_ip, "fe80:") || starts_with(dst_ip, "ff02:") || starts_with(dst_ip, "fe80:") {
+          abort
+        }
+        if dst_ip == "255.255.255.255" || starts_with(dst_ip, "224.") || starts_with(dst_ip, "239.") || proto == "igmp" {
+          abort
+        }
+
+        # Drop out-of-state TCP teardown/keepalive packets (FA, FPA, PA, A, R, RA without SYN)
+        if proto == "tcp" && action == "block" && !contains(tcp_flags, "S") {
+          abort
+        }
+
+        # Determine RFC1918 private vs public IP status for IPv4
+        src_is_private = false
+        dst_is_private = false
+        if is_ipv4(src_ip) {
+          c10, _ = ip_cidr_contains("10.0.0.0/8", src_ip)
+          c172, _ = ip_cidr_contains("172.16.0.0/12", src_ip)
+          c192, _ = ip_cidr_contains("192.168.0.0/16", src_ip)
+          c127, _ = ip_cidr_contains("127.0.0.0/8", src_ip)
+          src_is_private = (c10 == true) || (c172 == true) || (c192 == true) || (c127 == true)
+        }
+        if is_ipv4(dst_ip) {
+          d10, _ = ip_cidr_contains("10.0.0.0/8", dst_ip)
+          d172, _ = ip_cidr_contains("172.16.0.0/12", dst_ip)
+          d192, _ = ip_cidr_contains("192.168.0.0/16", dst_ip)
+          d127, _ = ip_cidr_contains("127.0.0.0/8", dst_ip)
+          dst_is_private = (d10 == true) || (d172 == true) || (d192 == true) || (d127 == true)
+        }
+
+        env_wl, env_err = get_env_var("WHITELIST_OUTBOUND_PORTS")
+        wl_str = if env_err == null { env_wl } else { "53,80,123,443,465,587,853,993,51820,1194" }
+        whitelist_ports = split(wl_str, ",")
+
+        # 3-Tier Security Classification
+        if src_is_private && !dst_is_private {
+          # Traffic originating from internal LAN/VLAN heading to the public WAN
+          if action == "block" {
+            security_tier = "tier_1_outbound_suspicious"
+            sub_type = "outbound_blocked"
+          } else if !includes(whitelist_ports, dst_port) {
+            security_tier = "tier_1_outbound_suspicious"
+            sub_type = "outbound_uncommon_port"
+          } else {
+            # Normal allowed outbound web/DNS/NTP traffic -> drop to save storage
+            abort
+          }
+        } else if !src_is_private {
+          # Traffic originating from external public IP on the WAN
+          if action == "pass" && direction == "in" {
+            security_tier = "tier_2_access_and_auth"
+            sub_type = "wan_inbound_pass"
+          } else if action == "block" {
+            security_tier = "tier_3_wan_blocked"
+            sub_type = "wan_inbound_block"
+          } else {
+            abort
+          }
+        } else if src_is_private && dst_is_private && action == "block" {
+          # Internal lateral movement blocked between VLANs (excluding noisy discovery ports)
+          noisy_local_ports = ["137", "138", "1900", "5353"]
+          if !includes(noisy_local_ports, dst_port) {
+            security_tier = "tier_1_outbound_suspicious"
+            sub_type = "internal_lateral_blocked"
+          } else {
+            abort
+          }
+        } else {
+          abort
+        }
+      } else {
+        # ----------------------------------------------------------------------
+        # Branch B: pfSense Authentication, VPN & Control Plane Daemons
+        # ----------------------------------------------------------------------
+        raw_lower = downcase(raw)
+        is_auth_daemon = contains(raw_lower, "sshd") ||
+                         contains(raw_lower, "openvpn") ||
+                         contains(raw_lower, "wireguard") ||
+                         contains(raw_lower, "charon") ||
+                         contains(raw_lower, "webconfigurator") ||
+                         contains(raw_lower, "authentication error") ||
+                         contains(raw_lower, "successful login") ||
+                         (contains(raw_lower, "user") && contains(raw_lower, "login"))
+
+        if !is_auth_daemon {
+          abort
+        }
+
+        security_tier = "tier_2_access_and_auth"
+        sub_type = "pfsense_auth_daemon"
+        action = "auth"
+        direction = "in"
+        iface = "mgmt"
+        raw_log = raw
+
+        # Attempt to extract any IPv4 address referenced in the auth log line
+        ip_match, ip_err = parse_regex(raw, r'(?P<ip>(?:\d{1,3}\.){3}\d{1,3})')
+        if ip_err == null {
+          src_ip = to_string(ip_match.ip)
+        }
+      }
+
+      .app = "pfsense"
+      .hit_count = 1
+      .src_ip = src_ip
+      .dst_ip = dst_ip
+      .src_port = src_port
+      .dst_port = dst_port
+      .proto = proto
+      .interface = iface
+      .reason = reason
+      .action = action
+      .direction = direction
+      .tcp_flags = tcp_flags
+      .rule_tracker = rule_tracker
+      .security_tier = security_tier
+      .sub_type = sub_type
+      .raw_log = raw_log
+
+      del(.message)
+      del(.source_type)
+
+  route_by_tier:
+    type: route
+    inputs:
+      - parse_and_classify
+    route:
+      high_priority: '.security_tier == "tier_1_outbound_suspicious" || .security_tier == "tier_2_access_and_auth"'
+      wan_blocked: '.security_tier == "tier_3_wan_blocked"'
+
+  aggregate_wan_blocks:
+    type: reduce
+    inputs:
+      - route_by_tier.wan_blocked
+    expire_after_ms: 60000
+    flush_period_ms: 15000
+    group_by:
+      - src_ip
+      - dst_port
+      - proto
+      - interface
+      - security_tier
+      - sub_type
+      - action
+      - direction
+    merge_strategies:
+      hit_count: sum
+      dst_ip: retain
+      tcp_flags: retain
+      rule_tracker: retain
+
+  normalize_for_loki:
+    type: remap
+    inputs:
+      - route_by_tier.high_priority
+      - aggregate_wan_blocks
+    source: |
+      .hit_count = to_int(.hit_count) ?? 1
+      .security_tier = to_string(.security_tier) ?? "unknown"
+      .sub_type = to_string(.sub_type) ?? "unknown"
+      .action = to_string(.action) ?? "unknown"
+      .direction = to_string(.direction) ?? "unknown"
+      .interface = to_string(.interface) ?? "unknown"
+      .src_ip = to_string(.src_ip) ?? "unknown"
+      .dst_ip = to_string(.dst_ip) ?? "unknown"
+      .src_port = to_string(.src_port) ?? "0"
+      .dst_port = to_string(.dst_port) ?? "0"
+      .proto = to_string(.proto) ?? "unknown"
+
+sinks:
+  loki_sink:
+    type: loki
+    inputs:
+      - normalize_for_loki
+    endpoint: "http://loki:3100"
+    compression: snappy
+    encoding:
+      codec: json
+    labels:
+      app: "pfsense"
+      security_tier: "{{ security_tier }}"
+      sub_type: "{{ sub_type }}"
+      action: "{{ action }}"
+      direction: "{{ direction }}"
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: drop_newest

@@ -1,0 +1,81 @@
+services:
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: pfsensemon-loki
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "${LOKI_HTTP_PORT:-3100}:3100"
+    volumes:
+      - ./config/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - pfsensemon_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  vector:
+    image: timberio/vector:0.39.0-alpine
+    container_name: pfsensemon-vector
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      loki:
+        condition: service_healthy
+    ports:
+      - "${VECTOR_SYSLOG_PORT:-5140}:5140/udp"
+    environment:
+      - PFSENSE_WAN_INTERFACES=${PFSENSE_WAN_INTERFACES:-wan,igb0,em0,vtnet0,pppoe0,ix0,re0}
+      - WHITELIST_OUTBOUND_PORTS=${WHITELIST_OUTBOUND_PORTS:-53,80,123,443,465,587,853,993,51820,1194}
+    volumes:
+      - ./config/vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - vector_data:/var/lib/vector
+    command: ["--config", "/etc/vector/vector.yaml"]
+    networks:
+      - pfsensemon_net
+
+  analyzer:
+    build:
+      context: ./analyzer
+      dockerfile: Dockerfile
+    container_name: pfsensemon-analyzer
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      loki:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - LOKI_INTERNAL_URL=http://loki:3100
+    volumes:
+      - analyzer_state:/app/state
+      - ./analyzer/src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+    networks:
+      - pfsensemon_net
+
+volumes:
+  loki_data:
+  vector_data:
+  analyzer_state:
+
+networks:
+  pfsensemon_net:
+    driver: bridge

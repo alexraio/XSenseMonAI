@@ -1,0 +1,31 @@
+[project]
+name = "pfsensemon"
+version = "0.1.0"
+description = "AI-powered pfSense firewall log monitoring with Vector, Grafana Loki, Anthropic Claude, and Hermes Agent integration"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.40.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.9.0",
+    "python-dotenv>=1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "ruff>=0.7.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["analyzer"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "BLE", "EXE"]
+ignore = ["E501"]

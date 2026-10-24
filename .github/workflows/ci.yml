@@ -1,0 +1,65 @@
+name: CI — Lint, Regression Tests & Config Validation
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    name: Python ${{ matrix.python-version }} (Ruff + Pytest + Wiki Lint)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+            analyzer/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r analyzer/requirements.txt pytest ruff
+
+      - name: Run Ruff linter
+        run: ruff check analyzer hermes_skill scripts tests
+
+      - name: Run Pytest unit & regression test suite
+        run: pytest -v
+
+  validate-vector-and-docker:
+    name: Validate Vector VRL & Docker Compose Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Vector VRL pipeline (config/vector/vector.yaml)
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}/config/vector/vector.yaml:/etc/vector/vector.yaml:ro" \
+            timberio/vector:0.39.0-alpine \
+            validate --no-environment /etc/vector/vector.yaml
+
+      - name: Validate docker-compose.yml and build Analyzer image
+        run: |
+          cp .env.example .env
+          docker compose config -q
+          docker compose build analyzer
