@@ -46,6 +46,7 @@
 | **Hybrid Architecture: Deterministic Python Container + Hermes Skill** | Running a 15-minute native LLM cron inside Hermes; completely isolating Hermes | Native Hermes cron jobs invoke an LLM session on every tick (96x/day) even when idle. A lightweight Python container performs a free local check ("Zero-Token Filter") and calls Anthropic only on anomalies, while Hermes acts as an interactive on-demand SOC analyst. |
 | **Multi-Provider & Local LLM Engine (`LLM_PROVIDER`)** | Hardcoding Anthropic SDK only; adding heavy `litellm`/`openai` dependencies | Supports `anthropic` (MiniMax/Claude via `/v1/messages`), `ollama` (local models without API key), `openai` (LM Studio/vLLM/OpenAI via `/v1/chat/completions`), and `openrouter` using native `httpx` while keeping 100% `.env` backward compatibility. |
 | **Post-Filter GeoIP & ASN Enrichment (`analyzer/src/geoip.py`)** | Enriching every raw packet in Vector VRL; shipping heavy `.mmdb` databases | Runs batch GeoIP/ASN resolution only when `should_invoke_ai == True` (preserving 0 external calls during quiet windows) and enriches both the LLM prompt payload and Telegram alerts (`ENABLE_GEOIP=true/false`). |
+| **Self-Contained Defensive Bash Quick-Start Wizard (`setup.sh`)** | Thin Bash wrapper + Python wizard inside Docker container; multi-file Bash library (`scripts/lib/*.sh`); requiring Python 3.12+ / `uv` on the host | Zero host Python dependencies required (runs on macOS Bash 3.2+ and Linux Bash 4+ with just `bash`, `curl`, and `docker compose`), avoids container UID/GID `.env` permission pitfalls, detects the host's physical LAN IP directly, uses a multi-fallback JSON helper (`python3`/`jq`/POSIX `grep`+`sed`) for live `/v1/models` and Telegram `/getUpdates` auto-discovery, and delegates E2E smoke testing to the running `analyzer` container. |
 | **Dual Output: Telegram Alert + `[AI_REPORT]` ingestion back into Loki** | Telegram only; Email only | Telegram provides instant mobile alerting, while pushing the AI analysis back into Loki allows viewing historical Claude reports inside a dedicated Grafana panel. |
 | **English for all code and documentation** | Italian or mixed language in codebase | Follows standard software engineering best practices and explicit project rule (`AGENTS.md`). |
 
@@ -127,6 +128,7 @@ PfsenseMon/
 ├── AGENTS.md                        # Project rules (Italian chat / English code & docs)
 ├── DESIGN.md                        # Validated architecture and design specification
 ├── README.md                        # Step-by-step setup guide (pfSense, Docker, Grafana, Hermes)
+├── setup.sh                         # Self-contained interactive Quick-Start & onboarding wizard
 ├── docker-compose.yml               # Vector + Loki + Python AI Analyzer stack
 ├── .env.example                     # Template for API keys, thresholds, and whitelists
 ├── config/
@@ -153,5 +155,55 @@ PfsenseMon/
 ├── scripts/
 │   └── simulate_pfsense_logs.py     # Traffic simulator to test the pipeline before touching pfSense
 └── tests/
-    └── test_filter_engine.py        # Unit tests for Zero-Token filter and deduplication logic
+    ├── test_filter_engine.py        # Unit tests for Zero-Token filter and deduplication logic
+    ├── test_regressions.py          # Regression suite (Local LLMs, Structured Output, GeoIP, VRL & Wiki lint)
+    ├── test_scheduler_and_redaction.py # Scheduler catch-up and secret redaction tests
+    └── test_setup_wizard.py         # Automated tests for setup.sh (--help, --check, .env generation & permissions)
 ```
+
+---
+
+## 7. Interactive Quick-Start & Onboarding Wizard (`setup.sh`)
+
+### 7.1 Understanding Summary
+- **What is being built**: An interactive, self-contained Quick-Start and onboarding script (`setup.sh`) in the project root that takes a freshly cloned repository through prerequisite checks, guided `.env` generation with live auto-discovery, Docker Compose deployment, and optional end-to-end synthetic verification.
+- **Why it exists**: Manual `.env` configuration is error-prone (host vs. container URLs for local LLMs, model identifier typos, numeric Telegram `chat_id` lookup, timeout tuning for local models). `setup.sh` reduces onboarding to under 2 minutes while providing immediate E2E confidence.
+- **Target Audience**: Network administrators, homelab/SOHO operators, and developers deploying `PfsenseMon` on macOS (Apple Silicon) or Linux hosts.
+- **Key Constraints**:
+  - Zero host Python package dependencies required: runs anywhere with standard `bash` (compatible with macOS Bash 3.2+ and Linux Bash 4+/5+), `curl`, and `docker compose`.
+  - Express + Advanced flow: prompts only for essential settings (LLM provider/model, report language, Telegram credentials) with provider-aware smart defaults, offering an optional `[y/N]` toggle for advanced ports, thresholds, and whitelists.
+- **Explicit Non-Goals**:
+  - Does not auto-install Docker Engine or OS packages via `apt`/`brew`.
+  - Does not mutate remote pfSense/OPNsense appliances or SSH into the Hermes VM automatically (prints ready-to-copy snippets populated with the detected Docker host LAN IP instead).
+
+### 7.2 Assumptions & Non-Functional Requirements
+- **Credential Security**: `.env` and any `.env.bak` backups are written atomically with `chmod 600` (`umask 077`). Secret inputs (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `LLM_API_KEY`, `TELEGRAM_BOT_TOKEN`) use silent terminal reads (`read -r -s`) and are never echoed to stdout logs.
+- **Cross-Platform Compatibility**: Avoids Bash 4+-only associative arrays (`declare -A`) and GNU-specific `sed -i` flags so the script runs identically on macOS (`bash 3.2`) and Linux.
+- **Dual Host/Container URL Mapping**: When probing local LLM servers (`LM Studio` on port `1234` or `Ollama` on port `11434`) during the wizard, `setup.sh` queries `http://localhost:<port>/v1/models` from the host, while persisting `http://host.docker.internal:<port>/v1` into `.env` for the `analyzer` container.
+- **Network Timeouts**: All live discovery HTTP calls (`curl`) enforce `--max-time 5` with graceful manual fallback if an endpoint is offline.
+
+### 7.3 Wizard Decision Log
+
+| Decision | Alternatives Considered | Rationale |
+| :--- | :--- | :--- |
+| **Full Guided Onboarding Scope** | Config-only generator; full OS package installer | Covers pre-flight checks, `.env` wizard, `docker compose up -d --build`, optional E2E smoke test, and final copy-paste integration summary without risky OS-level package mutations. |
+| **Zero Host Python Dependencies (Bash 3.2+ + `curl` + multi-fallback JSON helper)** | Requiring Python 3.12 + `uv` + `rich` on host; running wizard inside a temporary Docker container | Allows immediate execution on bare Linux servers and macOS without pre-building containers or hitting container UID/GID permission issues when writing `.env`. |
+| **Idempotent Existing `.env` Handling with `.env.bak` (`0600`)** | Always overwriting; aborting if `.env` exists | Lets users safely re-run `./setup.sh` to either keep their current `.env`, reconfigure with an automatic backup, or jump straight to E2E diagnostics. |
+| **Assisted Auto-Discovery (`/v1/models` + Telegram `/getUpdates`)** | Blind text input only | Eliminates model name typos on LM Studio/Ollama/OpenRouter and resolves numeric `TELEGRAM_CHAT_ID` interactively when the user sends `/start` to their bot. |
+| **Two-Speed Smoke Test (Fast ~10s vs. Full ~65s)** | Forcing a mandatory 65s wait every time | Fast mode injects Tier 1 (`outbound`) and Tier 2 (`auth`) scenarios (forwarded 1:1 by Vector without the 60s Tier 3 `reduce` window), while Full mode tests all 3 tiers including the 60s aggregation flush. |
+
+### 7.4 Architecture & CLI Modes (`setup.sh`)
+1. **CLI Flags**:
+   - `./setup.sh` (default): Interactive onboarding workflow.
+   - `./setup.sh --check`: Non-interactive pre-flight and `.env` validation (exit code `0` if valid, non-zero otherwise).
+   - `./setup.sh --test-only`: Runs the interactive E2E smoke test against the running stack.
+   - `./setup.sh --non-interactive`: Generates `.env` from environment variables/defaults for automated testing.
+   - `./setup.sh --help`: Displays usage documentation.
+2. **Internal Modules**:
+   - `ui_helpers`: ANSI styling (respecting `NO_COLOR`), `prompt_choice`, `prompt_input`, `prompt_secret`, `json_extract` (`python3` -> `jq` -> POSIX `grep`/`sed`).
+   - `preflight_checks`: Verifies `docker`, `docker compose`, `curl`, Docker daemon readiness, port availability (`UDP 5140`, `TCP 3100`), and detects host LAN IP (`detect_host_ip`).
+   - `env_wizard`: Handles existing `.env` menu, provider selection (`LM Studio`, `Ollama`, `MiniMax`, `Anthropic`, `OpenRouter`, `OpenAI-compatible`), live `/v1/models` discovery, Telegram `/getMe` + `/getUpdates` `chat_id` discovery, optional advanced settings, and `0600` file generation.
+   - `stack_deploy`: Executes `docker compose up -d --build` and polls `http://localhost:${LOKI_HTTP_PORT}/ready` until healthy.
+   - `smoke_test`: Executes `simulate_pfsense_logs.py` and `python -m src.main --once --reset-dedup` inside `pfsensemon-analyzer` (Fast ~10s or Full ~65s; Dry-Run or Live AI + Telegram).
+   - `print_next_steps`: Outputs pre-filled configuration snippets for pfSense Remote Syslog, Grafana Loki Data Source, and the Hermes Agent skill using the detected `<HOST_IP>`.
+
