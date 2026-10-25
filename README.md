@@ -196,6 +196,7 @@ LLM_MODEL=google/gemini-2.5-flash
 | `VECTOR_SYSLOG_PORT` | UDP port exposed for pfSense syslog | `5140` |
 | `LOKI_HTTP_PORT` | TCP port exposed for Grafana & Hermes | `3100` |
 | `ANALYSIS_INTERVAL_MINUTES` | Frequency of automated AI checks | `15` |
+| `MAX_CATCHUP_MINUTES` | Max look-back to backfill windows missed during host sleep/downtime | `1440` |
 | `WAN_BLOCK_HIT_THRESHOLD` | Blocked packets from 1 IP to trigger Tier 3 | `50` |
 | `WAN_PORT_SCAN_THRESHOLD` | Distinct ports from 1 IP to flag a Port Scan | `8` |
 | `ALERT_DEDUP_TTL_MINUTES` | Cooldown before re-alerting on the same offender | `120` |

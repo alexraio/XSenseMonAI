@@ -12,7 +12,7 @@ tags:
   - geoip
   - telegram
   - analyzer
-timestamp: 2026-10-24T15:30:00Z
+timestamp: 2026-10-25T09:25:00Z
 ---
 
 # Python AI Analyzer, Multi-Provider LLM & GeoIP Enrichment
@@ -30,7 +30,9 @@ The `pfsensemon-analyzer` container (`analyzer/`) is the brain of **PfsenseMon**
 - [`geoip.py`](../../analyzer/src/geoip.py) (`resolve_geoip_batch`, `enrich_evaluation_with_geoip`): Post-filter batch GeoIP/ASN lookup (`country`, `country_code`, `city`, `isp`, `asn`) triggered only when `should_invoke_ai == True` and `ENABLE_GEOIP=true`.
 - [`ai_analyst.py`](../../analyzer/src/ai_analyst.py) (`AnthropicSOCAnalyst` / `SOCAnalyst`): Multi-provider LLM client with exponential backoff, `<think>...</think>` reasoning tag stripping, and structured JSON extraction.
 - [`notifier.py`](../../analyzer/src/notifier.py) (`TelegramNotifier`): Sends HTML-formatted Telegram alerts with automatic numeric `chat_id` discovery via `getUpdates`, inline GeoIP/ASN labels (`DE · Hetzner · AS24940`), and raw fallback alerts if the LLM API is unreachable.
-- [`main.py`](../../analyzer/src/main.py): Daemon loop and CLI (`--once`, `--dry-run`, `--lookback-minutes`, `--reset-dedup`).
+- [`scheduler.py`](../../analyzer/src/scheduler.py) (`plan_analysis_windows`, `SchedulerState`): Wall-clock window planning with a persisted cursor (`scheduler_state.json`) that backfills windows missed while the Docker host was suspended.
+- [`log_redaction.py`](../../analyzer/src/log_redaction.py) (`configure_logging`, `SecretRedactingFilter`, `mask_identifier`): Root logging setup that scrubs Telegram bot tokens and configured API keys from every log record and silences `httpx`/`httpcore` request logs.
+- [`main.py`](../../analyzer/src/main.py): Daemon loop (`run_scheduled_windows`, `run_analysis_window` → `CycleOutcome`) and CLI (`--once`, `--dry-run`, `--lookback-minutes`, `--reset-dedup`).
 
 ---
 
@@ -66,6 +68,30 @@ The `pfsensemon-analyzer` container (`analyzer/`) is the brain of **PfsenseMon**
 ## 4. Telegram `chat_id` Auto-Discovery
 
 If `TELEGRAM_CHAT_ID` is initially set to a non-numeric string (such as the bot's username `demo_pfsense_bot`), `TelegramNotifier._resolve_chat_id()` calls `https://api.telegram.org/bot<TOKEN>/getUpdates` to automatically resolve the user's numeric `chat_id` (e.g., `123456789`).
+
+---
+
+## 5. Sleep-Resilient Scheduling & Gap Backfilling
+
+When the stack runs on Docker Desktop (macOS laptop/desktop), host sleep suspends the Docker VM. Monotonic timers (`time.sleep`) stop advancing during suspension, so the legacy loop (3600 × `sleep(1)`) delayed cycles by the full sleep duration, and because each cycle only inspected the last `ANALYSIS_INTERVAL_MINUTES`, the time in between was **never analyzed** (live incident: ~7 h unanalyzed overnight, including a Tier 1 event).
+
+The daemon now:
+
+1. Schedules cycles against a **wall-clock deadline** (`time.time()`), so a cycle starts immediately after the host wakes up.
+2. Persists the end of the last analyzed window in `scheduler_state.json` (next to the dedup cache, on the `analyzer_state` volume via `STATE_FILE_PATH=/app/state/dedup_cache.json`).
+3. Plans contiguous `interval`-sized windows from the cursor to *now* (`plan_analysis_windows`), bounded by `MAX_CATCHUP_MINUTES` (default `1440`). Small scheduling jitter (< 10% of the interval) is merged into a single window; every window is at least one interval long so per-interval thresholds keep their meaning.
+4. Advances the cursor after every analyzed window (including `AI_FAILED`, since the raw fallback alert covered it). A `LOKI_UNAVAILABLE` outcome stops the backfill so the remaining windows are retried on the next cycle. `--dry-run` never moves the cursor; `--lookback-minutes` keeps the legacy fixed-window behaviour.
+
+> Note: backfilling cannot recover syslog packets that never reached Vector while the host was asleep (UDP syslog is not buffered by pfSense). Run the stack on an always-on host to avoid ingestion gaps.
+
+---
+
+## 6. Log Hygiene & Secret Redaction
+
+- `httpx`/`httpcore` loggers are set to `WARNING`: their INFO request lines embedded the full Telegram Bot API URL (`/bot<TOKEN>/sendMessage`).
+- A handler-level `SecretRedactingFilter` replaces any Telegram-token-shaped string and the configured `TELEGRAM_BOT_TOKEN` / LLM API keys (≥ 12 chars) with `<REDACTED>` in messages **and** tracebacks.
+- Delivery confirmations mask the chat ID (`******789`).
+- The Zero-Token skip message reports the configured provider (`Skipping LLM call (provider=openai, 0 tokens spent)`) instead of always mentioning Anthropic.
 
 ---
 

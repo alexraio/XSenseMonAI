@@ -165,3 +165,16 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
   - Special protection for `wiki/`: all historical traces, raw evidence (`wiki/raw/`), benchmark logs, and runbooks must undergo thorough sanitization before push.
 - Sanitized historical raw logs in [`wiki/raw/2026-10-24-local-llm-benchmark.md`](raw/2026-10-24-local-llm-benchmark.md) and [`wiki/raw/2026-10-23-e2e-verification-minimax.md`](raw/2026-10-23-e2e-verification-minimax.md).
 - Implemented automated regression testing (`test_regression_wiki_sensitive_data_anonymization`) in [`tests/test_regressions.py`](../tests/test_regressions.py) ensuring CI blocks any non-RFC5737/non-RFC1918 IPs or credential leaks in `wiki/`.
+
+---
+
+## [2026-10-25] fix | Docker Log Audit: Sleep-Resilient Scheduler, Secret Redaction & Provider-Aware Logging
+
+- Audited live `pfsensemon-loki`, `pfsensemon-vector` and `pfsensemon-analyzer` container logs and correlated them with macOS `pmset` sleep/wake history:
+  - Loki `context canceled` / `empty ring` errors occur only at container shutdown/startup (benign).
+  - Recurring Loki ring errors (`too many unhealthy instances in the ring`, `auto-forgetting instance`) coincide exactly with host DarkWake/Wake events: heartbeats go stale while Docker Desktop is suspended (benign, self-healing; transient Grafana 500s possible right after wake).
+  - Root cause of real issues: host sleep. UDP syslog received during sleep is lost (host-level, not addressed in code), and the analyzer skipped windows.
+- Fixed analyzer window skipping after host suspension (new [`analyzer/src/scheduler.py`](../analyzer/src/scheduler.py)): wall-clock deadline scheduling, persisted cursor (`scheduler_state.json`), contiguous interval-sized backfill bounded by new `MAX_CATCHUP_MINUTES` (default `1440`). `docker-compose.yml` now sets `STATE_FILE_PATH=/app/state/dedup_cache.json` so the dedup cache and cursor persist on the `analyzer_state` volume (previously defaulted to `/tmp` inside the container).
+- Fixed Telegram bot token leakage in `docker logs` (new [`analyzer/src/log_redaction.py`](../analyzer/src/log_redaction.py)): `httpx`/`httpcore` set to `WARNING`, handler-level secret redaction (messages and tracebacks), masked chat IDs. Strengthened `test_regression_wiki_sensitive_data_anonymization` with the real Telegram token shape.
+- Fixed Zero-Token skip log line to report the configured provider instead of always "Anthropic".
+- Added 18 tests in [`tests/test_scheduler_and_redaction.py`](../tests/test_scheduler_and_redaction.py); full suite: 37 passed, `ruff` clean. Updated [AI Analyzer component page](components/ai-analyzer-minimax.md) (sections 5–6).

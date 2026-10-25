@@ -105,6 +105,8 @@ class AppConfig:
 
     # Scheduling & Zero-Token filter thresholds
     analysis_interval_minutes: int = 15
+    # Maximum look-back used to backfill windows missed while the host was suspended/offline
+    max_catchup_minutes: int = 1440
     wan_block_hit_threshold: int = 50
     wan_port_scan_threshold: int = 8
     outbound_suspicious_threshold: int = 1
@@ -132,6 +134,11 @@ class AppConfig:
 
     # State persistence path for deduplication cache
     state_file_path: Path = Path("/app/state/dedup_cache.json")
+
+    @property
+    def scheduler_state_path(self) -> Path:
+        """Location of the scheduler cursor file (stored next to the deduplication cache)."""
+        return self.state_file_path.with_name("scheduler_state.json")
 
     def __post_init__(self) -> None:
         provider = (self.llm_provider or "anthropic").strip().lower()
@@ -246,6 +253,7 @@ class AppConfig:
                 "LOKI_INTERNAL_URL", os.getenv("LOKI_URL", "http://localhost:3100")
             ).rstrip("/"),
             analysis_interval_minutes=max(1, int(os.getenv("ANALYSIS_INTERVAL_MINUTES", "15"))),
+            max_catchup_minutes=max(0, int(os.getenv("MAX_CATCHUP_MINUTES", "1440"))),
             wan_block_hit_threshold=max(1, int(os.getenv("WAN_BLOCK_HIT_THRESHOLD", "50"))),
             wan_port_scan_threshold=max(1, int(os.getenv("WAN_PORT_SCAN_THRESHOLD", "8"))),
             outbound_suspicious_threshold=max(

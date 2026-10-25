@@ -761,6 +761,8 @@ def test_regression_wiki_sensitive_data_anonymization() -> None:
     secret_patterns = [
         re.compile(r"\b(?:sk-[a-zA-Z0-9_\-]{20,})\b"),
         re.compile(r"\b(?:AAF-[a-zA-Z0-9_\-]{20,})\b"),
+        # Real Telegram bot token shape: "<numeric bot id>:AA<secret>"
+        re.compile(r"(?<!\d)\d{6,}:AA[a-zA-Z0-9_\-]{30,}"),
         re.compile(r"\b(?:ghp_[a-zA-Z0-9]{36})\b"),
     ]
 

@@ -9,6 +9,7 @@ import re
 import httpx
 
 from .config import AppConfig
+from .log_redaction import mask_identifier
 from .models import AISecurityReport, FilterEvaluationResult
 
 logger = logging.getLogger(__name__)
@@ -239,7 +240,9 @@ class TelegramNotifier:
                     else:
                         resp.raise_for_status()
 
-            logger.info("Delivered security alert to Telegram chat %s", target_chat_id)
+            logger.info(
+                "Delivered security alert to Telegram chat %s", mask_identifier(target_chat_id)
+            )
             return all_succeeded
         except httpx.HTTPError as exc:
             logger.error("Failed to send Telegram alert: %s", exc)
