@@ -189,3 +189,31 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
   - For substantial, architectural, multi-file, or breaking changes, the agent MUST create and switch to a dedicated branch prior to editing code or documentation.
   - Standardized semantic branch naming prefixes: `feature/*`, `refactor/*`, `fix/*`, and `chore/*` / `test/*`.
   - Main branch (`main`) remains deployable and changes are merged only after test verification and user confirmation.
+
+---
+
+## [2026-10-25] feat | Implemented Interactive Quick-Start & Onboarding Wizard (`setup.sh` on `feature/setup-wizard`)
+
+- Completed structured `brainstorming` workflow (Understanding Lock, NFRs, 3 architectural options, incremental design validation, and Decision Log) documented in [`DESIGN.md`](../DESIGN.md) (Section 7).
+- Implemented self-contained defensive Bash Quick-Start wizard [`setup.sh`](../setup.sh) (compatible with macOS Bash 3.2+ and Linux Bash 4+/5+, requiring zero host Python packages):
+  - **Pre-Flight Checks (`--check`)**: Validates `curl`, `docker`, `docker compose` v2, daemon readiness, UDP `5140` / TCP `3100` port availability, and auto-detects the host LAN IP.
+  - **Idempotent `.env` Wizard**: Detects existing `.env` files (offering to keep, reconfigure with `0600` `.env.bak` backup, or jump to E2E smoke testing) and writes `.env` atomically with `chmod 600`.
+  - **Live Auto-Discovery**: Probes `/v1/models` on local (`LM Studio`, `Ollama` via `localhost` while persisting `host.docker.internal` for the container) and cloud endpoints using a multi-fallback JSON helper (`python3` -> `jq` -> POSIX `grep`/`sed`); verifies Telegram bot tokens via `/getMe` and resolves numeric `TELEGRAM_CHAT_ID` interactively via `/getUpdates`.
+  - **Two-Speed E2E Smoke Test (`--test-only`)**: Supports both a Fast Smoke Test (~10s, Tier 1 & Tier 2 forwarded 1:1) and a Full 3-Tier Smoke Test (~65s, including Vector's 60s `reduce` flush) in Live AI or Dry-Run mode.
+- Added 5 automated tests in [`tests/test_setup_wizard.py`](../tests/test_setup_wizard.py) covering Bash 3.2 syntax compatibility, `--help`/`--version`, `--non-interactive` `0600` `.env` & `.env.bak` generation, `--check` validation, and mocked HTTP `/v1/models` auto-discovery.
+- Updated [`README.md`](../README.md), [`wiki/runbooks/pfsense-and-e2e-testing.md`](runbooks/pfsense-and-e2e-testing.md), and [`wiki/index.md`](index.md).
+
+---
+
+## [2026-10-25] fix | Resolved LLM Variable Precedence Conflict & Wizard Cleanup (`feature/setup-wizard`)
+
+- Diagnosed live `Connection error.` during Anthropic / MiniMax execution on Raspberry Pi caused by lingering local LLM environment variables (`LLM_BASE_URL=http://host.docker.internal:1234/v1` and `LLM_API_KEY=not-needed`) taking priority over `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`.
+- Updated [`analyzer/src/config.py`](../analyzer/src/config.py) (`AppConfig.__post_init__`):
+  - When `LLM_PROVIDER == "anthropic"`, `ANTHROPIC_*` settings (`anthropic_api_key`, `anthropic_base_url`, `anthropic_model`) now strictly take precedence over generic `LLM_*` variables.
+- Updated [`setup.sh`](../setup.sh):
+  - In `run_env_wizard`, selecting cloud providers (MiniMax, Anthropic, OpenRouter) now automatically clears conflicting local LLM variables (`CFG_LLM_BASE_URL=""`, `CFG_LLM_API_KEY=""`, `CFG_LLM_MODEL=""`), and selecting local providers clears cloud keys.
+  - Reset default initial values in `load_cfg_defaults` for `CFG_LLM_BASE_URL` and `CFG_LLM_API_KEY` to prevent cross-profile leakage.
+- Added 2 regression tests:
+  - `test_regression_anthropic_precedence_over_lingering_local_llm_vars` in [`tests/test_regressions.py`](../tests/test_regressions.py).
+  - `test_setup_sh_interactive_minimax_clears_conflicting_llm_vars` in [`tests/test_setup_wizard.py`](../tests/test_setup_wizard.py).
+- Verified full test suite passes (44 tests in `2.24s`, `ruff` clean).

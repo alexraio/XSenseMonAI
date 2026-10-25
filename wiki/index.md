@@ -26,7 +26,7 @@ Welcome to the **PfsenseMon** LLM Wiki & Open Knowledge Format (OKF) catalog. Ag
 
 ## Operational Runbooks (`runbooks/`)
 
-- [pfSense Configuration & End-to-End Testing Runbook](runbooks/pfsense-and-e2e-testing.md) — Step-by-step instructions for pfSense Syslog forwarding, VLAN firewall rules, synthetic traffic generation (`scripts/simulate_pfsense_logs.py`), and `uv` test execution.
+- [Quick-Start Wizard, pfSense Configuration & E2E Testing Runbook](runbooks/pfsense-and-e2e-testing.md) — Interactive `./setup.sh` onboarding wizard, pfSense Syslog forwarding, VLAN firewall rules, synthetic traffic generation (`scripts/simulate_pfsense_logs.py`), and `uv` test execution.
 
 ## Raw Evidence & Verification Snapshots (`raw/`)
 

@@ -1,22 +1,40 @@
 ---
 type: Runbook
-title: pfSense Configuration & End-to-End Testing Runbook
-description: Operational procedures for configuring pfSense Syslog, running synthetic tests, and executing unit tests with uv.
-resource: scripts/simulate_pfsense_logs.py
+title: Quick-Start Wizard, pfSense Configuration & E2E Testing Runbook
+description: Operational procedures for the interactive setup.sh onboarding wizard, pfSense Syslog configuration, synthetic smoke tests, and uv/pytest verification.
+resource: setup.sh
 tags:
   - runbook
+  - setup-wizard
   - pfsense
   - testing
   - uv
   - docker
-timestamp: 2026-10-23T20:25:00Z
+timestamp: 2026-10-25T12:12:00Z
 ---
 
-# pfSense Configuration & End-to-End Testing Runbook
+# Quick-Start Wizard, pfSense Configuration & E2E Testing Runbook
+
+## 0. Interactive Quick-Start & Onboarding Wizard (`./setup.sh`)
+
+Run [`setup.sh`](../../setup.sh) from the project root to perform automated pre-flight checks, interactive `.env` generation (`0600` permissions, live `/v1/models` and Telegram `/getUpdates` auto-discovery), Docker Compose startup, and two-speed E2E smoke testing:
+
+```bash
+# Interactive full onboarding flow
+./setup.sh
+
+# Non-destructive pre-flight & .env validation only
+./setup.sh --check
+
+# Run interactive E2E smoke test (Fast ~10s or Full ~65s) on active containers
+./setup.sh --test-only
+```
+
+---
 
 ## 1. Local Development, Regression Tests & CI (`uv` + GitHub Actions)
 
-Activate the `uv` virtual environment and run the unit & regression test suite (`tests/test_filter_engine.py` and [`tests/test_regressions.py`](../../tests/test_regressions.py)):
+Activate the `uv` virtual environment and run the unit & regression test suite ([`tests/test_filter_engine.py`](../../tests/test_filter_engine.py), [`tests/test_regressions.py`](../../tests/test_regressions.py), [`tests/test_scheduler_and_redaction.py`](../../tests/test_scheduler_and_redaction.py), and [`tests/test_setup_wizard.py`](../../tests/test_setup_wizard.py)):
 
 ```bash
 source .venv/bin/activate

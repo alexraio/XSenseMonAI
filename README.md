@@ -64,6 +64,7 @@ PfsenseMon/
 ├── DESIGN.md                        # Architecture specification & decision log
 ├── LICENSE                          # Apache License 2.0
 ├── README.md                        # Complete setup & operations guide
+├── setup.sh                         # Interactive Quick-Start & onboarding wizard (Bash 3.2+ / zero host deps)
 ├── pyproject.toml                   # Python project metadata & pytest/ruff config
 ├── docker-compose.yml               # Vector + Loki + Python Analyzer stack
 ├── .env.example                     # Environment variables template
@@ -94,7 +95,9 @@ PfsenseMon/
 │   └── simulate_pfsense_logs.py     # Synthetic pfSense UDP syslog generator for testing
 ├── tests/
 │   ├── test_filter_engine.py        # Core unit tests (Zero-Token filter, dedup, URL normalization)
-│   └── test_regressions.py          # Regression suite (Local LLMs, Structured Output, GeoIP, VRL & Wiki lint)
+│   ├── test_regressions.py          # Regression suite (Local LLMs, Structured Output, GeoIP, VRL & Wiki lint)
+│   ├── test_scheduler_and_redaction.py # Sleep-resilient scheduler & secret log redaction tests
+│   └── test_setup_wizard.py         # Automated tests for setup.sh (--check, .env 0600, model auto-discovery)
 └── wiki/                            # Karpathy LLM Wiki + Google Cloud OKF Knowledge Base
     ├── index.md                     # Root OKF catalog (okf_version: "1.0") for progressive disclosure
     ├── log.md                       # Chronological project & operational log
@@ -118,7 +121,36 @@ PfsenseMon/
 
 ---
 
-## Step-by-Step Setup Guide
+## Interactive Quick-Start Wizard (`./setup.sh`)
+
+The fastest way to configure, deploy, and verify `PfsenseMon` on **macOS** or **Linux** (requiring zero Python packages on the host—just `bash`, `curl`, and `docker compose`) is the interactive Quick-Start wizard:
+
+```bash
+./setup.sh
+```
+
+What `./setup.sh` does automatically:
+1. **Host Pre-Flight Checks**: Verifies `docker`, `docker compose` (v2), `curl`, port availability (`UDP 5140`, `TCP 3100`), and detects your Docker host's LAN IP.
+2. **Idempotent `.env` Wizard (`chmod 600`)**:
+   - If `.env` already exists, offers to keep it, reconfigure it (creating a `0600` `.env.bak` backup), or jump straight to E2E diagnostics.
+   - Guides you through choosing your AI backend (**LM Studio**, **Ollama**, **MiniMax**, **Anthropic Claude**, **OpenRouter**, or custom **OpenAI-compatible**), automatically mapping `localhost` (for host discovery) to `host.docker.internal` (for container runtime).
+   - **Live `/v1/models` Auto-Discovery**: Queries your local or cloud endpoint and lets you select the loaded model from a numbered menu.
+   - **Live Telegram Verification & `chat_id` Auto-Discovery**: Verifies your bot token via `/getMe` and optionally resolves your numeric `TELEGRAM_CHAT_ID` via `/getUpdates` when you send `/start` to your bot.
+3. **One-Command Docker Deployment**: Runs `docker compose up -d --build` and polls `http://localhost:3100/ready` until Grafana Loki, Vector, and the Analyzer are healthy.
+4. **Two-Speed End-to-End Smoke Test**: Lets you run either a **Fast Smoke Test (~10s, Tier 1 & Tier 2)** or a **Full 3-Tier Smoke Test (~65s, including Vector's 60s Tier 3 aggregation flush)** in either **Live AI + Telegram** or **Dry-Run** mode.
+5. **Contextualized Integration Summary**: Prints copy-paste configuration snippets pre-filled with your detected Docker host LAN IP for **pfSense**, **Grafana**, and **Hermes Agent**.
+
+Additional CLI modes:
+```bash
+./setup.sh --check             # Validate pre-flight requirements and existing .env
+./setup.sh --test-only         # Run the interactive E2E smoke test on the running stack
+./setup.sh --non-interactive   # Generate .env from environment variables/defaults
+./setup.sh --help              # Show all options
+```
+
+---
+
+## Manual Step-by-Step Setup Guide
 
 ### Step 1: Configure Environment Variables
 

@@ -148,13 +148,12 @@ class AppConfig:
             )
         object.__setattr__(self, "llm_provider", provider)
 
-        effective_key = (self.llm_api_key or self.anthropic_api_key).strip()
-        object.__setattr__(self, "llm_api_key", effective_key)
-
         if provider == "anthropic":
-            base_url = normalize_anthropic_base_url(self.llm_base_url or self.anthropic_base_url)
-            default_model = self.anthropic_model.strip() or "MiniMax-M2.5"
+            effective_key = (self.anthropic_api_key or self.llm_api_key).strip()
+            base_url = normalize_anthropic_base_url(self.anthropic_base_url or self.llm_base_url)
+            effective_model = (self.anthropic_model or self.llm_model).strip() or "MiniMax-M2.5"
         else:
+            effective_key = (self.llm_api_key or self.anthropic_api_key).strip()
             base_url = normalize_openai_base_url(self.llm_base_url, provider=provider)
             default_models = {
                 "ollama": "qwen2.5:14b",
@@ -162,9 +161,11 @@ class AppConfig:
                 "openrouter": "google/gemini-2.5-flash",
             }
             default_model = default_models.get(provider, "gpt-4o-mini")
+            effective_model = (self.llm_model or default_model).strip()
 
+        object.__setattr__(self, "llm_api_key", effective_key)
         object.__setattr__(self, "llm_base_url", base_url)
-        object.__setattr__(self, "llm_model", (self.llm_model or default_model).strip())
+        object.__setattr__(self, "llm_model", effective_model)
 
     @classmethod
     def from_env(cls, env_path: str | Path | None = None) -> AppConfig:
