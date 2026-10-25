@@ -1,10 +1,42 @@
-# XSenseMonAI — AI-Powered pfSense and OPNsense Security Monitoring System
+# XSenseMonAI — AI-Powered Network Security & Observability for Homelabs & Home Users
 
-**XSenseMonAI** is a containerized security telemetry pipeline and AI anomaly detection system for **pfSense** and **OPNsense** firewalls. It combines **Vector** (high-speed Syslog parsing and 60-second edge aggregation), **Grafana Loki** (lightweight log storage connected to your existing **Grafana** server), a **Python AI Analyzer** supporting both cloud APIs (**MiniMax**, **Anthropic Claude**, **OpenRouter**) and completely private, air-gapped **Local LLM runtimes** (**LM Studio**, **Ollama**, **vLLM**, **llama.cpp**), **Telegram Bot** mobile alerting, and an interactive CLI skill for **Hermes Agent**.
+> **Empowering homelabbers, enthusiasts, and everyday users to truly understand what is happening inside their network—turning cryptic firewall logs into plain-language, actionable intelligence.**  
+> *Featuring deep native support for **pfSense** and **OPNsense**, with an active architectural vision to expand across **Ubiquiti UniFi**, **MikroTik RouterOS**, **OpenWrt**, and other leading home & lab routers.*
+
+**XSenseMonAI** (formerly *PfsenseMon*) is a containerized, lightweight security telemetry pipeline and AI anomaly detection system. It bridges the gap between enterprise-grade network monitoring and everyday home/lab network owners. Combining **Vector** (high-speed Syslog parsing and 60-second edge aggregation), **Grafana Loki** (lightweight log storage connected to your existing **Grafana** server), a **Python AI Analyzer** supporting both cloud APIs (**MiniMax**, **Anthropic Claude**, **OpenRouter**) and 100% private, air-gapped **Local LLM runtimes** (**LM Studio**, **Ollama**, **vLLM**, **llama.cpp**), **Telegram Bot** mobile alerting, and an interactive CLI skill for **Hermes Agent**.
+
+---
+
+## 🎯 Project Mission & Goals
+
+### 1. The Problem: "Firewall Blindness" in Home & Lab Networks
+Many homelabbers, smart home enthusiasts, and tech-savvy users invest in advanced open-source firewalls like **pfSense** or **OPNsense** to protect their homes, IoT ecosystems, and self-hosted services. However, running a capable firewall immediately introduces a classic dilemma: **information overload**.
+- Millions of cryptic Syslog lines flood the console every day (`filterlog`, rule IDs, TCP flags, hex codes).
+- Constant automated Internet background scans generate thousands of dropped WAN packets, causing false alarms and alert fatigue.
+- In the middle of all this noise, **real threats slip by unnoticed**: a compromised IoT smart camera executing outbound C2 callbacks, suspicious inter-VLAN lateral movement from an untrusted guest device, or repeated brute-force attempts on administrative interfaces.
+- Users are left asking: *"Is my network actually safe?"*, *"What does this log line mean?"*, and *"What concrete action should I take right now to fix it?"*
+
+### 2. The Solution: Plain-Language Intelligence & Actionable Intervention
+XSenseMonAI is built from the ground up to answer those exact questions:
+- **Demystify Network Telemetry**: Instead of presenting raw packet dumps, the AI SOC Analyst translates complex network events into clear, plain language (configurable in English, Italian, or other preferred languages).
+- **Zero-Token Pre-Filtering**: Evaluates traffic patterns locally first. Harmless Internet noise is summarized without spending a single AI token; only genuine anomalies trigger LLM reasoning.
+- **Actionable Remediation ("Know How to Intervene")**: When an alert fires, XSenseMonAI doesn't just describe the issue—it provides concrete, prioritized instructions on how to intervene (e.g., *"Isolate host `192.168.1.50` on your IoT VLAN"*, *"Verify outgoing port 4444 on your media server"*, *"Review pfSense rule #1000000102"*).
+- **Privacy & Sovereignty First**: Supports 100% on-premises local LLMs (via LM Studio, Ollama, vLLM) so that network metadata and internal topologies never need to leave your LAN.
+
+### 3. The Future: A Universal, Multi-Brand Router Ecosystem
+While XSenseMonAI was born with deep, native integration for **pfSense** and **OPNsense** (leveraging FreeBSD's CSV `filterlog`), the overarching goal is to become the **universal open-source AI network monitor for all home and lab routers**:
+- 🌐 **Ubiquiti UniFi**: Syslog & UniFi OS firewall/traffic flow log integration (UDM Pro/SE, Express, Gateway).
+- 📶 **MikroTik RouterOS**: Firewall rule logging and connection tracking syslog parsers.
+- 🐧 **OpenWrt**: `iptables`/`nftables` log parsing for modular open-source home routers.
+- 🛡️ **VyOS & Linux Firewalls**: Native support for enterprise-grade software routers and custom Linux gateways.
+- 🔍 **DNS-Level Observability**: Correlating L3/L4 firewall drops and flows with **Unbound DNS** queries to expose the exact human-readable domain names (FQDNs) behind outbound connections.
 
 ---
 
 ## Key Features
+
+- **Built for Homelabbers & Everyday Users**: Delivers clear, human-readable explanations instead of raw hex or packet jargon, empowering users to understand *why* an event matters and giving concrete instructions on *how to intervene* (e.g. quarantine an IoT device, refine a firewall rule, or investigate a local workstation).
+- **Multi-Brand Extensibility**: Built on a modular Vector + Loki foundation designed to expand from pfSense and OPNsense to UniFi, MikroTik, OpenWrt, and Linux firewalls.
 
 - **3-Tier Hybrid Security Monitoring**:
   - 🔴 **Tier 1 (`tier_1_outbound_suspicious`)**: Captures 100% of blocked outbound (`LAN/VLAN -> WAN`) connections, outbound traffic to non-standard ports, and blocked inter-VLAN lateral movement to detect compromised internal hosts, malware C2 callbacks, or data exfiltration.
@@ -41,12 +73,12 @@
 
 ```mermaid
 flowchart LR
-    PFS["pfSense / OPNsense Firewall<br/>(Syslog UDP 5140)"] -->|Raw CSV filterlog + Auth| VEC["Vector<br/>(Docker Container)"]
+    PFS["pfSense / OPNsense Firewall<br/><i>(+ UniFi, MikroTik, OpenWrt)</i><br/>(Syslog UDP 5140)"] -->|Raw CSV filterlog + Auth| VEC["Vector<br/>(Docker Container)"]
     VEC -->|Tier 1 & 2: 1:1 JSON<br/>Tier 3: 60s Reduced JSON| LOKI["Grafana Loki<br/>(Docker - TCP 3100)"]
     LOKI <-->|Data Source| GRAF["Existing Grafana Server"]
-    LOKI <-->|LogQL Poll every 15m| PY["PfsenseMon Analyzer<br/>(Python Docker Container)"]
+    LOKI <-->|LogQL Poll every 15m| PY["XSenseMonAI Analyzer<br/>(Python Docker Container)"]
     PY -->|Only on Threshold Breach| LLM["AI SOC Analyst<br/>(Local LM Studio / Ollama / Cloud MiniMax / Claude)"]
-    PY -->|Alert Notification| TG["Telegram Bot"]
+    PY -->|Plain-Language Alert & Action Steps| TG["Telegram Bot"]
     PY -->|Store AI Report| LOKI
     HERMES["Hermes Agent<br/>(Ubuntu VM - Isolated VLAN)"] -.->|FW Rule: TCP 3100 Only<br/>On-Demand Queries| LOKI
 ```
@@ -411,6 +443,19 @@ Every `push` and `pull_request` to `main` triggers two automated GitHub Actions 
 This repository maintains a self-compounding **LLM Wiki** under [`wiki/`](wiki/index.md) combining:
 - **[Andrej Karpathy's LLM Wiki Pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)** (`ingest`, `query`, `lint` workflows + immutable `raw/` evidence)
 - **[Google Cloud Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)** (`okf_version: "1.0"`, YAML frontmatter, progressive disclosure via [`wiki/index.md`](wiki/index.md), and chronological tracking via [`wiki/log.md`](wiki/log.md)).
+
+---
+
+## 🗺️ Strategic Roadmap & Multi-Vendor Ecosystem
+
+XSenseMonAI is continuously evolving from its pfSense/OPNsense roots toward a universal, plug-and-play AI security and observability companion for home and lab networks:
+
+| Phase | Milestone | Description | Status |
+| :--- | :--- | :--- | :--- |
+| **Phase 1** | **pfSense & OPNsense Core** | 3-Tier hybrid telemetry, Vector 60s aggregation, Zero-Token pre-filter, multi-provider LLM (Cloud & Local), Telegram alerts with GeoIP, and Hermes Agent SOC skill. | ✅ **Production Ready** |
+| **Phase 2** | **DNS-Layer Observability (Unbound DNS)** | Ingest and correlate pfSense/OPNsense Unbound DNS query logs with L3/L4 flows, identifying the real domain names (FQDNs) behind outbound connections and flagging DGA/C2 domains. | 🔄 **In Active Design** |
+| **Phase 3** | **Multi-Brand Router Expansion** | Custom Vector VRL ingestion pipelines and normalized event schemas for **Ubiquiti UniFi OS**, **MikroTik RouterOS**, and **OpenWrt**. | 📋 **Planned** |
+| **Phase 4** | **Interactive Remediation & SOAR Assistant** | Two-way Telegram bot commands (`/status`, `/investigate <ip>`, `/isolate <host>`) and dynamic firewall alias synchronization for one-tap containment. | 📋 **Planned** |
 
 ---
 

@@ -217,3 +217,47 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
   - `test_regression_anthropic_precedence_over_lingering_local_llm_vars` in [`tests/test_regressions.py`](../tests/test_regressions.py).
   - `test_setup_sh_interactive_minimax_clears_conflicting_llm_vars` in [`tests/test_setup_wizard.py`](../tests/test_setup_wizard.py).
 - Verified full test suite passes (44 tests in `2.24s`, `ruff` clean).
+
+---
+
+## [2026-10-25] roadmap | Future Strategic Directions: SOAR Active Defense, Multi-Source Telemetry & Host Profiling
+
+- Conducted comprehensive architecture review and brainstorming session to define future evolution milestones for PfsenseMon:
+  1. **Direction A (SOAR Active Defense & Interactive Telegram Bot)**:
+     - Two-way interactive Telegram bot with inline action buttons (`[🔴 Block IP]`, `[⚪ Whitelist]`, `[🔍 Deep Investigate]`).
+     - pfSense enforcement mechanism: dynamic URL Table Alias served via a lightweight HTTP endpoint or direct pfSense management (e.g. pfSense alias / `pfctl` table).
+     - Conversational SOC commands (`/status`, `/investigate <ip>`, `/blocked`, `/whitelist`).
+  2. **Direction B (Multi-Source Telemetry: DNS & L7 IDS/IPS)**:
+     - Ingestion of pfSense Unbound DNS logs to correlate Tier 1 outbound connection alerts with resolved domain names (FQDNs / DGA / C2 domains).
+     - Ingestion of Suricata / Snort EVE JSON logs for application-layer signature and CVE exploit correlation.
+  3. **Direction C (Asset Inventory & Behavioral Baseline Profiling)**:
+     - Internal LAN host inventory and profiling (IoT, servers, workstations).
+     - Behavioral anomaly detection (flagging deviations from normal communication baselines even without firewall rule violations).
+- Selected **Direction A (SOAR Active Defense & Interactive Telegram Bot)** as the primary focus for structured architectural brainstorming.
+
+---
+
+## [2026-10-25] brainstorm | Architectural Review, YAGNI Pivot & Unbound DNS Roadmap Checkpoint
+
+- **Brainstorming Session Review**:
+  - Initially explored **Direction A (SOAR Active Defense / Telegram Blocklist)**: analyzed native pfSense *URL Table (IPs)* alias, Telegram Long Polling, Human-in-the-Loop button interactions, and configurable `AUTO_BLOCK_CRITICAL` hybrid mode.
+  - **Critical YAGNI Realization**: User correctly highlighted that pfSense already enforces *Default Deny* on the WAN interface, automatically dropping all unsolicited inbound traffic. Without extensive exposed WAN services or port forwarding, dynamic inbound blocklists introduce unnecessary complexity for minimal real-world defensive gain.
+  - **Strategic Pivot to Direction B (Network Observability & Unbound DNS)**: Realigned the project vision around its true core mission: **deep internal and external network observability** ("understanding what is genuinely happening across the LAN and WAN in plain human language").
+  - Identified **pfSense Unbound DNS Resolver** query logging as the missing link to bridge anonymous L3/L4 IP connections with real domain names (FQDNs, CDNs, tracking/telemetry endpoints, and C2/DGA anomalies).
+- **Exact Resume Checkpoint for Next Session**:
+  - Resume structured brainstorming on **Direction B: Unbound DNS Integration**:
+    - **Step 2 Alignment Question Pending**: Select between:
+      1. *(Recommended) Full Approach*: Both connection flow enrichment (mapping IP packets to resolved domain names) AND dedicated DNS anomaly detection (high-entropy/DGA domains, excessive NXDOMAIN bursts, anomalous query rates from IoT).
+      2. *Flow Enrichment Only*: Pure reverse mapping from IP flows to domain names.
+      3. *Top Talkers & Dashboard Focus*: Grafana-centric aggregation of top querying hosts, domains, and external DNS servers.
+
+---
+
+## [2026-10-25] doc | Updated README.md with Core Homelabber Mission, Plain-Language Intervention & Multi-Brand Roadmap
+
+- Updated [`README.md`](../README.md) to formalize the foundational project goal and vision:
+  - **Empowering Homelabbers & Everyday Users**: Addressing "firewall blindness" where non-enterprise users are overwhelmed by cryptic syslog lines and false alarms from internet noise.
+  - **Plain-Language Intelligence & Actionable Intervention**: Turning raw firewall logs into human-understandable findings with prioritized, concrete steps on how to intervene (e.g. isolating IoT devices, adjusting firewall rules, or inspecting local anomalies).
+  - **Universal Multi-Brand Router Roadmap**: Established the explicit strategic roadmap to expand beyond pfSense and OPNsense to **Ubiquiti UniFi OS**, **MikroTik RouterOS**, and **OpenWrt**.
+  - Added dedicated `🎯 Project Mission & Goals` section, updated the Mermaid architecture diagram, and introduced the `🗺️ Strategic Roadmap & Multi-Vendor Ecosystem` milestone matrix.
+
