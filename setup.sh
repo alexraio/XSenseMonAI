@@ -754,12 +754,12 @@ cfg_val() {
 load_cfg_defaults() {
   local src_file="$1"
   CFG_LLM_PROVIDER="$(cfg_val "$src_file" "LLM_PROVIDER" "anthropic")"
-  CFG_ANTHROPIC_API_KEY="$(cfg_val "$src_file" "ANTHROPIC_API_KEY" "your-minimax-or-anthropic-api-key")"
+  CFG_ANTHROPIC_API_KEY="$(cfg_val "$src_file" "ANTHROPIC_API_KEY" "")"
   CFG_ANTHROPIC_BASE_URL="$(cfg_val "$src_file" "ANTHROPIC_BASE_URL" "https://api.minimax.io/anthropic")"
   CFG_ANTHROPIC_MODEL="$(cfg_val "$src_file" "ANTHROPIC_MODEL" "MiniMax-M3")"
-  CFG_LLM_API_KEY="$(cfg_val "$src_file" "LLM_API_KEY" "not-needed")"
-  CFG_LLM_BASE_URL="$(cfg_val "$src_file" "LLM_BASE_URL" "http://host.docker.internal:1234/v1")"
-  CFG_LLM_MODEL="$(cfg_val "$src_file" "LLM_MODEL" "google/gemma-4-12b")"
+  CFG_LLM_API_KEY="$(cfg_val "$src_file" "LLM_API_KEY" "")"
+  CFG_LLM_BASE_URL="$(cfg_val "$src_file" "LLM_BASE_URL" "")"
+  CFG_LLM_MODEL="$(cfg_val "$src_file" "LLM_MODEL" "")"
   CFG_OPENROUTER_API_KEY="$(cfg_val "$src_file" "OPENROUTER_API_KEY" "")"
   CFG_LLM_TIMEOUT_SECONDS="$(cfg_val "$src_file" "LLM_TIMEOUT_SECONDS" "90")"
   CFG_LLM_MAX_TOKENS="$(cfg_val "$src_file" "LLM_MAX_TOKENS" "2500")"
@@ -824,6 +824,10 @@ run_env_wizard() {
       # LM Studio Local
       CFG_LLM_PROVIDER="openai"
       CFG_LLM_API_KEY="not-needed"
+      CFG_ANTHROPIC_API_KEY=""
+      CFG_ANTHROPIC_BASE_URL=""
+      CFG_ANTHROPIC_MODEL=""
+      CFG_OPENROUTER_API_KEY=""
       local lms_port="1234"
       prompt_input "LM Studio HTTP port on host" "1234" lms_port
       CFG_LLM_BASE_URL="http://host.docker.internal:${lms_port}/v1"
@@ -832,7 +836,7 @@ run_env_wizard() {
       CFG_LLM_STRUCTURED_OUTPUT="true"
       CFG_MAX_PROMPT_ITEMS_PER_TIER="15"
 
-      discover_and_select_model "http://localhost:${lms_port}/v1/models" "" "google/gemma-4-12b" CFG_LLM_MODEL
+      discover_and_select_model "http://localhost:${lms_port}/v1/models" "" "${CFG_LLM_MODEL:-google/gemma-4-12b}" CFG_LLM_MODEL
       printf "\n  %s💡 LM Studio Best Practice:%s Disable 'Thinking' in LM Studio when using Structured\n" "${C_YELLOW}" "${C_RESET}"
       printf "     Output and set Context Length to %s16384%s tokens for optimal SOC reports.\n\n" "${C_BOLD}" "${C_RESET}"
       ;;
@@ -840,6 +844,10 @@ run_env_wizard() {
       # Ollama Local
       CFG_LLM_PROVIDER="ollama"
       CFG_LLM_API_KEY="ollama"
+      CFG_ANTHROPIC_API_KEY=""
+      CFG_ANTHROPIC_BASE_URL=""
+      CFG_ANTHROPIC_MODEL=""
+      CFG_OPENROUTER_API_KEY=""
       local ollama_port="11434"
       prompt_input "Ollama HTTP port on host" "11434" ollama_port
       CFG_LLM_BASE_URL="http://host.docker.internal:${ollama_port}/v1"
@@ -848,12 +856,16 @@ run_env_wizard() {
       CFG_LLM_STRUCTURED_OUTPUT="true"
       CFG_MAX_PROMPT_ITEMS_PER_TIER="15"
 
-      discover_and_select_model "http://localhost:${ollama_port}/v1/models" "" "qwen2.5:14b" CFG_LLM_MODEL
+      discover_and_select_model "http://localhost:${ollama_port}/v1/models" "" "${CFG_LLM_MODEL:-qwen2.5:14b}" CFG_LLM_MODEL
       ;;
     3)
       # MiniMax Cloud
       CFG_LLM_PROVIDER="anthropic"
       CFG_ANTHROPIC_BASE_URL="https://api.minimax.io/anthropic"
+      CFG_LLM_API_KEY=""
+      CFG_LLM_BASE_URL=""
+      CFG_LLM_MODEL=""
+      CFG_OPENROUTER_API_KEY=""
       prompt_secret "Enter your MiniMax API Key" "$CFG_ANTHROPIC_API_KEY" CFG_ANTHROPIC_API_KEY
       prompt_input "MiniMax Model Name" "${CFG_ANTHROPIC_MODEL:-MiniMax-M3}" CFG_ANTHROPIC_MODEL
       CFG_LLM_TIMEOUT_SECONDS="90"
@@ -864,8 +876,12 @@ run_env_wizard() {
       # Official Anthropic Cloud
       CFG_LLM_PROVIDER="anthropic"
       CFG_ANTHROPIC_BASE_URL="https://api.anthropic.com"
+      CFG_LLM_API_KEY=""
+      CFG_LLM_BASE_URL=""
+      CFG_LLM_MODEL=""
+      CFG_OPENROUTER_API_KEY=""
       prompt_secret "Enter your Anthropic API Key (sk-ant-...)" "$CFG_ANTHROPIC_API_KEY" CFG_ANTHROPIC_API_KEY
-      prompt_input "Anthropic Claude Model" "claude-sonnet-4-5" CFG_ANTHROPIC_MODEL
+      prompt_input "Anthropic Claude Model" "${CFG_ANTHROPIC_MODEL:-claude-sonnet-4-5}" CFG_ANTHROPIC_MODEL
       CFG_LLM_TIMEOUT_SECONDS="90"
       CFG_LLM_MAX_TOKENS="2500"
       CFG_MAX_PROMPT_ITEMS_PER_TIER="25"
@@ -874,9 +890,12 @@ run_env_wizard() {
       # OpenRouter Cloud
       CFG_LLM_PROVIDER="openrouter"
       CFG_LLM_BASE_URL="https://openrouter.ai/api/v1"
+      CFG_ANTHROPIC_API_KEY=""
+      CFG_ANTHROPIC_BASE_URL=""
+      CFG_ANTHROPIC_MODEL=""
       prompt_secret "Enter your OpenRouter API Key (sk-or-v1-...)" "$CFG_OPENROUTER_API_KEY" CFG_OPENROUTER_API_KEY
       CFG_LLM_API_KEY="$CFG_OPENROUTER_API_KEY"
-      prompt_input "OpenRouter Model ID" "google/gemini-2.5-flash" CFG_LLM_MODEL
+      prompt_input "OpenRouter Model ID" "${CFG_LLM_MODEL:-google/gemini-2.5-flash}" CFG_LLM_MODEL
       CFG_LLM_TIMEOUT_SECONDS="90"
       CFG_LLM_MAX_TOKENS="2500"
       CFG_LLM_STRUCTURED_OUTPUT="true"
@@ -885,15 +904,19 @@ run_env_wizard() {
     6)
       # Custom OpenAI-compatible
       CFG_LLM_PROVIDER="openai"
-      prompt_input "OpenAI-Compatible Base URL (use host.docker.internal for host services)" "$CFG_LLM_BASE_URL" CFG_LLM_BASE_URL
-      prompt_secret "API Key (or 'not-needed' for local endpoints)" "$CFG_LLM_API_KEY" CFG_LLM_API_KEY
+      CFG_ANTHROPIC_API_KEY=""
+      CFG_ANTHROPIC_BASE_URL=""
+      CFG_ANTHROPIC_MODEL=""
+      CFG_OPENROUTER_API_KEY=""
+      prompt_input "OpenAI-Compatible Base URL (use host.docker.internal for host services)" "${CFG_LLM_BASE_URL:-http://host.docker.internal:1234/v1}" CFG_LLM_BASE_URL
+      prompt_secret "API Key (or 'not-needed' for local endpoints)" "${CFG_LLM_API_KEY:-not-needed}" CFG_LLM_API_KEY
       local probe_base="${CFG_LLM_BASE_URL/host.docker.internal/localhost}"
       probe_base="${probe_base%/}/models"
       local auth_hdr=""
       if [[ -n "$CFG_LLM_API_KEY" && "$CFG_LLM_API_KEY" != "not-needed" ]]; then
         auth_hdr="Authorization: Bearer ${CFG_LLM_API_KEY}"
       fi
-      discover_and_select_model "$probe_base" "$auth_hdr" "$CFG_LLM_MODEL" CFG_LLM_MODEL
+      discover_and_select_model "$probe_base" "$auth_hdr" "${CFG_LLM_MODEL:-local-model}" CFG_LLM_MODEL
       ;;
   esac
 

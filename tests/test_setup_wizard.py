@@ -235,3 +235,61 @@ def test_setup_sh_interactive_lm_studio_model_autodiscovery(tmp_path: Path) -> N
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_setup_sh_interactive_minimax_clears_conflicting_llm_vars(tmp_path: Path) -> None:
+    """When choosing MiniMax Cloud in setup.sh, local LLM_* variables must be cleared to prevent conflicts."""
+    env_file = tmp_path / ".env"
+    # Pre-populate with old/stale LM Studio variables to simulate reconfiguration
+    env_file.write_text(
+        "LLM_PROVIDER=openai\n"
+        "LLM_BASE_URL=http://host.docker.internal:1234/v1\n"
+        "LLM_MODEL=google/gemma-4-12b\n"
+        "LLM_API_KEY=not-needed\n",
+        encoding="utf-8",
+    )
+
+    # Answers:
+    # 2 -> Reconfigure .env
+    # 3 -> MiniMax Cloud
+    # sk-ant-dummy-minimax-key-test -> MiniMax API key
+    # MiniMax-M3 -> Model name
+    # Italian -> Report language
+    # Y -> GeoIP
+    # 1234567890:AAF-replace-with-your-botfather-token -> Placeholder token
+    # 123456789 -> Chat ID
+    # N -> Skip advanced settings
+    user_inputs = "\n".join(
+        [
+            "2",
+            "3",
+            "sk-ant-dummy-minimax-key-test",
+            "MiniMax-M3",
+            "Italian",
+            "Y",
+            "1234567890:AAF-replace-with-your-botfather-token",
+            "123456789",
+            "N",
+            "",
+        ]
+    )
+
+    res = subprocess.run(
+        ["/bin/bash", str(SETUP_SCRIPT), "--env-file", str(env_file)],
+        input=user_inputs,
+        capture_output=True,
+        text=True,
+        env=_base_env(),
+        check=False,
+    )
+    assert res.returncode == 0, f"Wizard failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
+
+    content = env_file.read_text(encoding="utf-8")
+    assert "LLM_PROVIDER=anthropic" in content
+    assert "ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic" in content
+    assert "ANTHROPIC_MODEL=MiniMax-M3" in content
+    assert "ANTHROPIC_API_KEY=sk-ant-dummy-minimax-key-test" in content
+    # Crucial: local LLM variables must be empty to avoid routing conflicts
+    assert "LLM_BASE_URL=\n" in content or "LLM_BASE_URL=" not in content or re.search(r"LLM_BASE_URL=\s*\n", content)
+    assert "LLM_API_KEY=\n" in content or "LLM_API_KEY=" not in content or re.search(r"LLM_API_KEY=\s*\n", content)
+

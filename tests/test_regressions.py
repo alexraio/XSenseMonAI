@@ -802,3 +802,27 @@ def test_regression_wiki_sensitive_data_anonymization() -> None:
                 f"Public IPs must use RFC 5737 documentation subnets (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)."
             )
 
+
+# ==============================================================================
+# 9. Regression: Anthropic Settings Precedence Over Lingering Local LLM Vars
+# ==============================================================================
+def test_regression_anthropic_precedence_over_lingering_local_llm_vars(tmp_path: Path) -> None:
+    """When LLM_PROVIDER=anthropic, ANTHROPIC_* settings must take precedence over lingering LLM_* variables."""
+    cfg = AppConfig(
+        state_file_path=tmp_path / "dedup.json",
+        llm_provider="anthropic",
+        anthropic_api_key="sk-ant-real-minimax-or-anthropic-key",
+        anthropic_base_url="https://api.minimax.io/anthropic",
+        anthropic_model="MiniMax-M3",
+        # Lingering defaults from local LLM configs
+        llm_api_key="not-needed",
+        llm_base_url="http://host.docker.internal:1234/v1",
+        llm_model="google/gemma-4-12b",
+    )
+
+    assert cfg.llm_provider == "anthropic"
+    assert cfg.llm_api_key == "sk-ant-real-minimax-or-anthropic-key"
+    assert cfg.llm_base_url == "https://api.minimax.io/anthropic"
+    assert cfg.llm_model == "MiniMax-M3"
+
+
