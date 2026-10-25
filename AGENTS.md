@@ -50,3 +50,23 @@ Every time before issuing a `git push` (or committing code/documentation destine
 2. **Secret & Pattern Scan**: Run a regex/grep check across all changes for tokens, API keys, and non-RFC5737/non-RFC1918 public IP addresses.
 3. **Wiki Scrutiny**: Perform a dedicated inspection of all modified files under `wiki/` to ensure full compliance with the anonymization standard.
 4. **Immediate Redaction**: If any sensitive or un-anonymized item is found, sanitize it immediately prior to push.
+
+## 4. Git Branching Strategy for Substantial Changes (Mandatory)
+Before embarking on substantial, architectural, multi-file, or breaking changes across the codebase, configuration, or infrastructure (e.g., refactoring core pipelines, introducing major new components or services, major dependency upgrades, disruptive configuration migrations, or large-scale test harness rewrites):
+
+1. **Pre-Change Branch Creation**:
+   - The agent **MUST** create and switch to a dedicated, descriptive Git branch (`git checkout -b <branch-name>`) **BEFORE** starting any code, configuration, or documentation modifications.
+   - Never develop substantial or disruptive changes directly on `main`.
+
+2. **Branch Naming Conventions**:
+   Use clear, semantic branch prefixes matching the type of update:
+   - `feature/<short-description>`: For new capabilities, tools, or major enhancements (e.g., `feature/setup-wizard`, `feature/sqlite-storage`).
+   - `refactor/<short-description>`: For structural redesigns, architecture migrations, or multi-file cleanups.
+   - `fix/<short-description>`: For non-trivial bug fixes or multi-component defect remediation.
+   - `chore/<short-description>` or `test/<short-description>`: For build toolchain changes, major test suite rewrites, or CI workflow updates.
+
+3. **Lifecycle & Merge Verification**:
+   - All commits on the branch must remain focused, well-documented in English, and covered by tests.
+   - Always execute the Pre-Push Security & Sensitive Data Anonymization Policy (Section 3) before pushing branch commits to remote repositories.
+   - Merge back into `main` only after full test verification, regression validation, and alignment with the user.
+

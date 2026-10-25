@@ -178,3 +178,14 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
 - Fixed Telegram bot token leakage in `docker logs` (new [`analyzer/src/log_redaction.py`](../analyzer/src/log_redaction.py)): `httpx`/`httpcore` set to `WARNING`, handler-level secret redaction (messages and tracebacks), masked chat IDs. Strengthened `test_regression_wiki_sensitive_data_anonymization` with the real Telegram token shape.
 - Fixed Zero-Token skip log line to report the configured provider instead of always "Anthropic".
 - Added 18 tests in [`tests/test_scheduler_and_redaction.py`](../tests/test_scheduler_and_redaction.py); full suite: 37 passed, `ruff` clean. Updated [AI Analyzer component page](components/ai-analyzer-minimax.md) (sections 5–6).
+
+---
+
+## [2026-10-25] governance | Mandatory Git Branching Strategy for Substantial Changes Codified
+
+- Codified a mandatory project rule governing Git workflows:
+  - Added Section 4 (`Git Branching Strategy for Substantial Changes`) to [`AGENTS.md`](../AGENTS.md).
+- Enforced requirements:
+  - For substantial, architectural, multi-file, or breaking changes, the agent MUST create and switch to a dedicated branch prior to editing code or documentation.
+  - Standardized semantic branch naming prefixes: `feature/*`, `refactor/*`, `fix/*`, and `chore/*` / `test/*`.
+  - Main branch (`main`) remains deployable and changes are merged only after test verification and user confirmation.
