@@ -44,7 +44,7 @@ flowchart LR
     PFS["pfSense / OPNsense Firewall<br/>(Syslog UDP 5140)"] -->|Raw CSV filterlog + Auth| VEC["Vector<br/>(Docker Container)"]
     VEC -->|Tier 1 & 2: 1:1 JSON<br/>Tier 3: 60s Reduced JSON| LOKI["Grafana Loki<br/>(Docker - TCP 3100)"]
     LOKI <-->|Data Source| GRAF["Existing Grafana Server"]
-    LOKI <-->|LogQL Poll (e.g. 15m)| PY["PfsenseMon Analyzer<br/>(Python Docker Container)"]
+    LOKI <-->|LogQL Poll every 15m| PY["PfsenseMon Analyzer<br/>(Python Docker Container)"]
     PY -->|Only on Threshold Breach| LLM["AI SOC Analyst<br/>(Local LM Studio / Ollama / Cloud MiniMax / Claude)"]
     PY -->|Alert Notification| TG["Telegram Bot"]
     PY -->|Store AI Report| LOKI
