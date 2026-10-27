@@ -276,4 +276,17 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
 - Added `config/known_flows.json` to [`.gitignore`](../.gitignore) to prevent user-specific LAN topologies from being committed, and mounted `./config:/app/config` in [`docker-compose.yml`](../docker-compose.yml).
 - Added 5 unit and integration tests in [`tests/test_known_flows.py`](../tests/test_known_flows.py) and updated [Zero-Token Pre-Filter & Deduplication](concepts/zero-token-filter.md) and [`README.md`](../README.md).
 
+---
+
+## [2026-10-27] enhance | Added Tier 1 Source-Port (`src_ports`) Attribution & P2P/DHT Disambiguation (`feature/tier1-src-port-enrichment`)
+
+- Investigated false-positive "C2 callback" alerts on internal hosts using [`hermes_skill/query_pfsense_loki.py`](../hermes_skill/query_pfsense_loki.py):
+  - Forensic root cause: BitTorrent Mainline DHT peer discovery originating from fixed `src_port="6881"` (`UDP`) towards random ephemeral peer ports on residential ISPs blocked by `pfBlockerNG` was reported to the LLM without `src_port` metadata, making random destination ports resemble C2 callbacks.
+- Enhanced [`analyzer/src/models.py`](../analyzer/src/models.py) (`OutboundAnomalySummary`) and [`analyzer/src/filter_engine.py`](../analyzer/src/filter_engine.py) to capture up to 5 distinct `src_ports` per Tier 1 flow group.
+- Updated `SYSTEM_PROMPT_TEMPLATE` in [`analyzer/src/ai_analyst.py`](../analyzer/src/ai_analyst.py) so the LLM inspects `src_ports` alongside `dst_port` and accurately distinguishes fixed daemon/P2P source ports (`6881/UDP` BitTorrent DHT, `51820/UDP` WireGuard, `123/UDP` NTP) from malware C2 callbacks.
+- Extended [`analyzer/src/known_flows.py`](../analyzer/src/known_flows.py) (`KnownFlowRule`, `KnownFlowSuggestion`, `build_flow_suggestions`) to support optional `src_ports` matching and automatically suggest a single `src_ports`-scoped rule when an internal host contacts 2+ distinct external IPs from the same fixed non-ephemeral source port.
+- Enhanced [`hermes_skill/query_pfsense_loki.py`](../hermes_skill/query_pfsense_loki.py) (`cmd_inspect_ip`) to output `src_port` in `recent_timeline` and `distinct_src_ports_involved`.
+- Added unit test `test_tier1_src_ports_enrichment_and_p2p_dht_flow_suggestion` in [`tests/test_known_flows.py`](../tests/test_known_flows.py) (50 total tests passing).
+
+
 

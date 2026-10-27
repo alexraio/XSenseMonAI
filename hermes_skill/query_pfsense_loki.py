@@ -243,14 +243,19 @@ def cmd_inspect_ip(
 
     total_hits = sum(int(r.get("hit_count") or 1) for r in records)
     ports_targeted: set[str] = set()
+    src_ports_seen: set[str] = set()
     tiers_seen: set[str] = set()
     timeline: list[dict[str, Any]] = []
 
     for r in records:
         tiers_seen.add(str(r.get("security_tier", "unknown")))
+        src_port = str(r.get("src_port") or "0")
         dst_port = str(r.get("dst_port") or "0")
+        proto = str(r.get("proto") or "unknown")
+        if src_port != "0":
+            src_ports_seen.add(f"{src_port}/{proto}")
         if dst_port != "0":
-            ports_targeted.add(f"{dst_port}/{r.get('proto', 'unknown')}")
+            ports_targeted.add(f"{dst_port}/{proto}")
         if len(timeline) < 30:
             timeline.append(
                 {
@@ -258,6 +263,7 @@ def cmd_inspect_ip(
                     "tier": r.get("security_tier"),
                     "sub_type": r.get("sub_type"),
                     "src_ip": r.get("src_ip"),
+                    "src_port": src_port,
                     "dst_ip": r.get("dst_ip"),
                     "dst_port": dst_port,
                     "proto": r.get("proto"),
@@ -274,6 +280,7 @@ def cmd_inspect_ip(
         "matching_log_entries": len(records),
         "total_packet_hits": total_hits,
         "security_tiers_triggered": sorted(tiers_seen),
+        "distinct_src_ports_involved": sorted(src_ports_seen)[:30],
         "distinct_ports_involved": sorted(ports_targeted)[:30],
         "recent_timeline": timeline,
     }

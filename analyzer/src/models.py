@@ -72,6 +72,7 @@ class OutboundAnomalySummary(BaseModel):
     action: str
     sub_type: str
     total_hits: int
+    src_ports: list[str] = Field(default_factory=list)
     sample_tcp_flags: str = ""
     dst_geoip: GeoIPInfo | None = None
 

@@ -34,6 +34,7 @@ You receive pre-aggregated telemetry across 3 Security Tiers:
 3. Tier 3 (`tier3_offenders`): External IPs blocked on the WAN that exceeded volume or port-scanning thresholds. Distinguish targeted multi-port reconnaissance or brute-force spikes from harmless background noise.
 
 Note: External IP entries may include `dst_geoip` or `src_geoip` metadata (`country`, `country_code`, `city`, `isp`, `asn`). Incorporate relevant geographical and ASN/ISP context into your findings.
+Each Tier 1 entry also includes `src_ports` (the source port(s) used on the internal host) alongside `dst_port`. Always inspect `src_ports`: if an internal host originates traffic from a fixed, well-known P2P/DHT or daemon port (e.g. `6881/UDP` for BitTorrent Mainline DHT, `51820/UDP` for WireGuard, or `123/UDP` for NTP) towards random high destination ports across residential ISPs, identify it accurately as P2P/DHT peer discovery or service chatter blocked by firewall/pfBlockerNG rules rather than a malware C2 callback.
 If `known_authorized_flows` is present in the payload, it lists known legitimate internal/outbound flows for the involved hosts (already suppressed by the pre-filter). Use those descriptions to identify device roles when an host exhibits new anomalous connections on unlisted ports or targets.
 
 CRITICAL: Do not output any thinking process, explanation, notes, or prelude. Start directly with the opening curly brace '{{' and output strictly a valid JSON object matching this exact schema:

@@ -53,12 +53,13 @@ Coarse source-IP whitelisting (`WHITELIST_INTERNAL_IPS`) is restricted solely to
 For router-agnostic, fine-grained suppression of known benign flows (e.g., an IoT smart display probing a media player across VLANs), [`analyzer/src/known_flows.py`](../../analyzer/src/known_flows.py) provides `KnownFlowsStore`:
 
 1. **Hot-Reloaded Structured Store (`config/known_flows.json`)**:
-   - Each `KnownFlowRule` has a deterministic `id` (`flow-<8hex>`), `enabled` toggle, `src_ip` (exact IP, CIDR subnet, or `*`), `dst_ip`, `ports` (ports or `start-end` ranges), `proto`, and human-readable `description`.
+   - Each `KnownFlowRule` has a deterministic `id` (`flow-<8hex>`), `enabled` toggle, `src_ip` (exact IP, CIDR subnet, or `*`), optional `src_ports`, `dst_ip`, `ports` (ports or `start-end` ranges), `proto`, and human-readable `description`.
    - Also supports compact `.env` rules (`WHITELIST_FLOWS=172.16.0.10>192.168.1.50:443,8080`) and CLI CRUD commands (`--list-flows`, `--add-flow`, `--remove-flow`).
 2. **Dual Role (Zero-Token + LLM Enrichment)**:
    - **Zero-Token Pre-Filter**: Matching Tier 1 events are suppressed deterministically before threshold evaluation (`0` tokens spent).
+   - **Source-Port (`src_ports`) Attribution for P2P/DHT Disambiguation**: `OutboundAnomalySummary` preserves up to 5 distinct `src_ports` per Tier 1 flow group so the LLM distinguishes fixed daemon/P2P source ports (e.g., `6881/UDP` BitTorrent Mainline DHT hitting random peer ports blocked by `pfBlockerNG`) from genuine malware C2 callbacks.
    - **LLM Topology Context**: When an involved host triggers an alert on an *unlisted* port (e.g. `22/SSH`), `known_authorized_flows` is injected into the LLM payload so the analyst knows the device's baseline role.
-   - **Copy-Pasteable Telegram Suggestions**: Whenever Tier 1 anomalies occur, `TelegramNotifier` appends a consolidated one-tap copyable JSON snippet (`Known Flow Suppression`) grouped by `(src_ip, dst_ip)`.
+   - **Copy-Pasteable Telegram Suggestions**: Whenever Tier 1 anomalies occur, `TelegramNotifier` appends a consolidated one-tap copyable JSON snippet (`Known Flow Suppression`) grouped by `(src_ip, dst_ip)` or by fixed `src_ports` when a single daemon port contacts multiple external IPs.
 
 ---
 

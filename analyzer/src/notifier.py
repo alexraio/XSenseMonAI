@@ -207,8 +207,11 @@ class TelegramNotifier:
                     if (dst_geo and dst_geo.short_label() not in {"", "LAN"})
                     else ""
                 )
+                src_port_suffix = (
+                    f":{html.escape(','.join(t1.src_ports[:3]))}" if t1.src_ports else ""
+                )
                 lines.append(
-                    f"• <code>{html.escape(t1.src_ip)}</code> → <code>{html.escape(t1.dst_ip)}:{html.escape(t1.dst_port)}/{html.escape(t1.proto)}</code>{dst_label} "
+                    f"• <code>{html.escape(t1.src_ip)}{src_port_suffix}</code> → <code>{html.escape(t1.dst_ip)}:{html.escape(t1.dst_port)}/{html.escape(t1.proto)}</code>{dst_label} "
                     f"[{html.escape(t1.action)}] ({t1.total_hits} hits)"
                 )
 

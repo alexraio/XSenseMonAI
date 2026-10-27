@@ -122,25 +122,28 @@ def simulate_lateral_blocked(
     src_ip: str = "172.16.0.10",
     dst_ip: str = "192.168.1.50",
     dst_ports: list[int] | None = None,
+    src_port: int | None = None,
+    proto: str = "tcp",
     hits_per_port: int = 4,
 ) -> None:
-    """Simulate blocked inter-VLAN lateral movement (Tier 1 `internal_lateral_blocked`)."""
+    """Simulate blocked inter-VLAN or custom outbound traffic (`tier_1_outbound_suspicious`)."""
     ports = dst_ports or [443, 8080]
     print(
-        f"[Lateral] Simulating Tier 1 inter-VLAN blocked traffic {src_ip} -> {dst_ip} on ports {ports}..."
+        f"[Flow] Simulating Tier 1 blocked traffic {src_ip}:{src_port or 'ephemeral'} -> {dst_ip} on ports {ports}/{proto}..."
     )
     for p_idx, dst_port in enumerate(ports):
         for i in range(hits_per_port):
+            effective_sport = src_port if src_port is not None else (51000 + (p_idx * 100) + i)
             msg = build_filterlog_ipv4(
                 interface="igc1",
                 action="block",
                 direction="in",
-                proto="tcp",
+                proto=proto,
                 src_ip=src_ip,
                 dst_ip=dst_ip,
-                src_port=51000 + (p_idx * 100) + i,
+                src_port=effective_sport,
                 dst_port=dst_port,
-                tcp_flags="S",
+                tcp_flags="S" if proto.lower() == "tcp" else "",
             )
             send_udp_syslog(host, port, msg)
 
@@ -156,12 +159,19 @@ def main() -> None:
         help="Traffic scenario to simulate (default: all)",
     )
     parser.add_argument("--src-ip", default="172.16.0.10", help="Source IP for lateral scenario")
+    parser.add_argument(
+        "--src-port",
+        type=int,
+        default=None,
+        help="Optional fixed source port (e.g. 6881 for BitTorrent DHT)",
+    )
     parser.add_argument("--dst-ip", default="192.168.1.50", help="Destination IP for lateral scenario")
     parser.add_argument(
         "--dst-ports",
         default="443,8080",
         help="Comma-separated destination ports for lateral scenario (default: 443,8080)",
     )
+    parser.add_argument("--proto", default="tcp", help="Protocol for lateral scenario (tcp or udp)")
     args = parser.parse_args()
 
     print(f"Sending synthetic pfSense Syslog packets to {args.host}:{args.port}/UDP...")
@@ -181,6 +191,8 @@ def main() -> None:
             src_ip=args.src_ip,
             dst_ip=args.dst_ip,
             dst_ports=parsed_ports,
+            src_port=args.src_port,
+            proto=args.proto,
         )
 
     print(

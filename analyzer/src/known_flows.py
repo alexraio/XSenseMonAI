@@ -38,18 +38,19 @@ def _compute_rule_id(
     ports: list[str],
     proto: str,
     sub_types: list[str],
+    src_ports: list[str] | None = None,
 ) -> str:
     """Compute a deterministic 8-hex-char rule ID from canonical flow attributes."""
-    canonical = json.dumps(
-        {
-            "src_ip": src_ip.strip().lower(),
-            "dst_ip": dst_ip.strip().lower(),
-            "ports": sorted(p.strip() for p in ports if p.strip()),
-            "proto": proto.strip().lower() or "*",
-            "sub_types": sorted(s.strip() for s in sub_types if s.strip()),
-        },
-        sort_keys=True,
-    )
+    payload: dict[str, Any] = {
+        "src_ip": src_ip.strip().lower(),
+        "dst_ip": dst_ip.strip().lower(),
+        "ports": sorted(p.strip() for p in ports if p.strip()),
+        "proto": proto.strip().lower() or "*",
+        "sub_types": sorted(s.strip() for s in sub_types if s.strip()),
+    }
+    if src_ports:
+        payload["src_ports"] = sorted(p.strip() for p in src_ports if p.strip())
+    canonical = json.dumps(payload, sort_keys=True)
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8]
     return f"flow-{digest}"
 
@@ -140,6 +141,7 @@ class KnownFlowRule(BaseModel):
     id: str = ""
     enabled: bool = True
     src_ip: str = "*"
+    src_ports: list[str] = Field(default_factory=list)
     dst_ip: str = "*"
     ports: list[str] = Field(default_factory=list)
     proto: str = "*"
@@ -156,6 +158,8 @@ class KnownFlowRule(BaseModel):
         normalized = dict(data)
         if "src_ip" not in normalized and "src" in normalized:
             normalized["src_ip"] = normalized.pop("src")
+        if "src_ports" not in normalized and "src_port" in normalized:
+            normalized["src_ports"] = normalized.pop("src_port")
         if "dst_ip" not in normalized and "dst" in normalized:
             normalized["dst_ip"] = normalized.pop("dst")
         if "ports" not in normalized and "port" in normalized:
@@ -167,6 +171,7 @@ class KnownFlowRule(BaseModel):
                     break
 
         normalized["src_ip"] = str(normalized.get("src_ip", "*") or "*").strip()
+        normalized["src_ports"] = _normalize_ports(normalized.get("src_ports"))
         normalized["dst_ip"] = str(normalized.get("dst_ip", "*") or "*").strip()
         normalized["ports"] = _normalize_ports(normalized.get("ports"))
 
@@ -188,6 +193,7 @@ class KnownFlowRule(BaseModel):
                 ports=normalized["ports"],
                 proto=normalized["proto"],
                 sub_types=normalized["sub_types"],
+                src_ports=normalized["src_ports"],
             )
 
         return normalized
@@ -204,6 +210,8 @@ class KnownFlowRule(BaseModel):
             return False
         if not _ip_matches(event.src_ip, self.src_ip):
             return False
+        if not _port_matches(event.src_port, self.src_ports):
+            return False
         if not _ip_matches(event.dst_ip, self.dst_ip):
             return False
         return _port_matches(event.dst_port, self.ports)
@@ -214,9 +222,11 @@ class KnownFlowRule(BaseModel):
             "id": self.id,
             "enabled": self.enabled,
             "src_ip": self.src_ip,
-            "dst_ip": self.dst_ip,
-            "ports": self.ports,
         }
+        if self.src_ports:
+            payload["src_ports"] = self.src_ports
+        payload["dst_ip"] = self.dst_ip
+        payload["ports"] = self.ports
         if self.proto != "*":
             payload["proto"] = self.proto
         if self.sub_types:
@@ -228,19 +238,23 @@ class KnownFlowRule(BaseModel):
 
     def to_llm_context_dict(self) -> dict[str, Any]:
         """Compact representation injected into the LLM prompt as baseline network context."""
-        return {
+        ctx: dict[str, Any] = {
             "src_ip": self.src_ip,
             "dst_ip": self.dst_ip,
             "ports": self.ports or ["*"],
             "proto": self.proto,
             "description": self.description or "Authorized known flow",
         }
+        if self.src_ports:
+            ctx["src_ports"] = self.src_ports
+        return ctx
 
 
 class KnownFlowSuggestion(BaseModel):
     """Copy-pasteable suppression suggestion generated from observed Tier 1 anomalies."""
 
     src_ip: str
+    src_ports: list[str] = Field(default_factory=list)
     dst_ip: str
     ports: list[str]
     proto: str = "*"
@@ -250,12 +264,14 @@ class KnownFlowSuggestion(BaseModel):
 
     def to_json_snippet(self) -> str:
         """Return a single-line JSON object ready to paste into `config/known_flows.json`."""
-        obj: dict[str, Any] = {
-            "src_ip": self.src_ip,
-            "dst_ip": self.dst_ip,
-            "ports": self.ports,
-            "description": self.description,
-        }
+        obj: dict[str, Any] = {"src_ip": self.src_ip}
+        if self.src_ports:
+            obj["src_ports"] = self.src_ports
+        obj["dst_ip"] = self.dst_ip
+        obj["ports"] = self.ports
+        if self.proto != "*":
+            obj["proto"] = self.proto
+        obj["description"] = self.description
         return json.dumps(obj, ensure_ascii=False)
 
     def to_compact_expr(self) -> str:
@@ -289,12 +305,54 @@ def build_flow_suggestions(
     anomalies: list[OutboundAnomalySummary],
     max_suggestions: int = 3,
 ) -> list[KnownFlowSuggestion]:
-    """Consolidate Tier 1 anomalies by `(src_ip, dst_ip)` into copy-pasteable flow suggestions."""
+    """Consolidate Tier 1 anomalies into copy-pasteable flow suggestions.
+
+    - If a source host contacts 2+ distinct external IPs using the exact same non-ephemeral
+      source port (e.g. BitTorrent DHT `6881/udp`), consolidates them into a single
+      source-port-scoped suggestion (`src_ports: ["6881"], dst_ip: "*", ports: ["*"]`).
+    - Otherwise groups by `(src_ip, dst_ip)` and consolidates destination ports.
+    """
+    suggestions: list[KnownFlowSuggestion] = []
+    handled_indices: set[int] = set()
+
+    # 1. Detect fixed source-port P2P/daemon pattern across multiple destination IPs
+    by_src_and_sport: dict[tuple[str, str, str], list[int]] = {}
+    for idx, item in enumerate(anomalies):
+        if (
+            item.sub_type in {"outbound_blocked", "outbound_uncommon_port"}
+            and len(item.src_ports) == 1
+            and item.src_ports[0].isdigit()
+            and int(item.src_ports[0]) < 49152
+        ):
+            sport = item.src_ports[0]
+            by_src_and_sport.setdefault((item.src_ip, sport, item.proto.lower()), []).append(idx)
+
+    for (src_ip, sport, proto), indices in by_src_and_sport.items():
+        distinct_dsts = {anomalies[i].dst_ip for i in indices}
+        if len(distinct_dsts) >= 2:
+            handled_indices.update(indices)
+            total_hits = sum(anomalies[i].total_hits for i in indices)
+            suggestions.append(
+                KnownFlowSuggestion(
+                    src_ip=src_ip,
+                    src_ports=[sport],
+                    dst_ip="*",
+                    ports=["*"],
+                    proto=proto if proto != "unknown" else "*",
+                    sub_type=anomalies[indices[0]].sub_type,
+                    total_hits=total_hits,
+                    description=f"Authorized P2P/daemon outbound flow (src_port {sport})",
+                )
+            )
+
+    # 2. Standard grouping by (src_ip, dst_ip) for remaining anomalies
     grouped_ports: dict[tuple[str, str], list[str]] = {}
     grouped_hits: dict[tuple[str, str], int] = {}
     grouped_sub_type: dict[tuple[str, str], str] = {}
 
-    for item in anomalies:
+    for idx, item in enumerate(anomalies):
+        if idx in handled_indices:
+            continue
         key = (item.src_ip, item.dst_ip)
         if key not in grouped_ports:
             grouped_ports[key] = []
@@ -305,8 +363,9 @@ def build_flow_suggestions(
         grouped_hits[key] += item.total_hits
 
     sorted_keys = sorted(grouped_hits.keys(), key=lambda k: grouped_hits[k], reverse=True)
-    suggestions: list[KnownFlowSuggestion] = []
-    for src_ip, dst_ip in sorted_keys[:max_suggestions]:
+    for src_ip, dst_ip in sorted_keys:
+        if len(suggestions) >= max_suggestions:
+            break
         ports = sorted(
             grouped_ports[(src_ip, dst_ip)],
             key=lambda p: int(p) if p.isdigit() else 99999,
@@ -327,7 +386,7 @@ def build_flow_suggestions(
                 description=default_desc,
             )
         )
-    return suggestions
+    return suggestions[:max_suggestions]
 
 
 class KnownFlowsStore:

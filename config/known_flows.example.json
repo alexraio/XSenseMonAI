@@ -10,5 +10,17 @@
     ],
     "proto": "tcp",
     "description": "Smart display to media player inter-VLAN discovery"
+  },
+  {
+    "id": "flow-example2",
+    "enabled": true,
+    "src_ip": "192.168.1.100",
+    "src_ports": [
+      "6881"
+    ],
+    "dst_ip": "*",
+    "ports": [],
+    "proto": "udp",
+    "description": "Authorized BitTorrent DHT daemon peer discovery"
   }
 ]

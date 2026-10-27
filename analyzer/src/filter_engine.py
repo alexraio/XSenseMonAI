@@ -107,6 +107,7 @@ class ZeroTokenFilterEngine:
 
         tier1_groups: dict[tuple[str, str, str, str, str, str], int] = defaultdict(int)
         tier1_flags: dict[tuple[str, str, str, str, str, str], str] = {}
+        tier1_src_ports: dict[tuple[str, str, str, str, str, str], list[str]] = defaultdict(list)
 
         tier2_groups: dict[tuple[str, str, str, str, str], int] = defaultdict(int)
         tier2_samples: dict[tuple[str, str, str, str, str], list[str]] = defaultdict(list)
@@ -157,6 +158,13 @@ class ZeroTokenFilterEngine:
                 tier1_groups[t1_key] += ev.hit_count
                 if ev.tcp_flags and not tier1_flags.get(t1_key):
                     tier1_flags[t1_key] = ev.tcp_flags
+                if (
+                    ev.src_port
+                    and ev.src_port != "0"
+                    and ev.src_port not in tier1_src_ports[t1_key]
+                    and len(tier1_src_ports[t1_key]) < 5
+                ):
+                    tier1_src_ports[t1_key].append(ev.src_port)
 
             # ------------------------------------------------------------------
             # Tier 2: Allowed Inbound WAN & pfSense Authentication Logs
@@ -195,6 +203,7 @@ class ZeroTokenFilterEngine:
                 suppressed_count += 1
                 continue
             new_dedup_keys.append(dedup_key)
+            t1_key = (src_ip, dst_ip, dst_port, proto, action, sub_type)
             tier1_list.append(
                 OutboundAnomalySummary(
                     src_ip=src_ip,
@@ -204,9 +213,8 @@ class ZeroTokenFilterEngine:
                     action=action,
                     sub_type=sub_type,
                     total_hits=hits,
-                    sample_tcp_flags=tier1_flags.get(
-                        (src_ip, dst_ip, dst_port, proto, action, sub_type), ""
-                    ),
+                    src_ports=tier1_src_ports.get(t1_key, []),
+                    sample_tcp_flags=tier1_flags.get(t1_key, ""),
                 )
             )
 

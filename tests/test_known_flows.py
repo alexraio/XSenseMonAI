@@ -329,3 +329,63 @@ def test_telegram_and_llm_include_known_flow_suggestions_and_context(
     assert len(sent_messages) == 1
     assert "Known Flow Suppression" in sent_messages[0]
     assert "&quot;ports&quot;: [&quot;8080&quot;, &quot;8443&quot;]" in sent_messages[0]
+
+
+def test_tier1_src_ports_enrichment_and_p2p_dht_flow_suggestion(tmp_path: Path) -> None:
+    """Verify Tier 1 anomalies include `src_ports` (e.g. 6881/UDP BitTorrent DHT) and generate `src_ports` rule suggestions."""
+    cfg = AppConfig(
+        anthropic_api_key="sk-ant-test",
+        state_file_path=tmp_path / "dedup.json",
+    )
+    engine = ZeroTokenFilterEngine(cfg)
+    now = datetime.now(tz=UTC)
+
+    dht_events = [
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_1_outbound_suspicious",
+            sub_type="outbound_blocked",
+            src_ip="10.0.0.25",
+            src_port="6881",
+            dst_ip="198.51.100.10",
+            dst_port="27879",
+            proto="udp",
+            action="block",
+            hit_count=1,
+        ),
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_1_outbound_suspicious",
+            sub_type="outbound_blocked",
+            src_ip="10.0.0.25",
+            src_port="6881",
+            dst_ip="203.0.113.20",
+            dst_port="64650",
+            proto="udp",
+            action="block",
+            hit_count=1,
+        ),
+    ]
+    res = engine.evaluate(dht_events, now, now)
+    assert res.should_invoke_ai is True
+    assert len(res.tier1_anomalies) == 2
+    assert res.tier1_anomalies[0].src_ports == ["6881"]
+    assert res.tier1_anomalies[1].src_ports == ["6881"]
+
+    # Smart suggestion should consolidate by fixed src_port 6881 across multiple random external IPs
+    suggestions = build_flow_suggestions(res.tier1_anomalies)
+    assert len(suggestions) == 1
+    assert suggestions[0].src_ip == "10.0.0.25"
+    assert suggestions[0].src_ports == ["6881"]
+    assert suggestions[0].dst_ip == "*"
+    assert suggestions[0].ports == [] or suggestions[0].ports == ["*"]
+    assert suggestions[0].proto == "udp"
+
+    # Verify adding that suggested rule suppresses 6881/udp while keeping other UDP source ports monitored
+    rule = KnownFlowRule.model_validate(json.loads(suggestions[0].to_json_snippet()))
+    assert rule.matches_event(dht_events[0]) is True
+    assert rule.matches_event(dht_events[1]) is True
+
+    other_udp = dht_events[0].model_copy(update={"src_port": "55555"})
+    assert rule.matches_event(other_udp) is False
+
