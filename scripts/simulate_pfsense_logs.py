@@ -116,15 +116,51 @@ def simulate_auth_anomaly(host: str, port: int) -> None:
         send_udp_syslog(host, port, web_msg)
 
 
+def simulate_lateral_blocked(
+    host: str,
+    port: int,
+    src_ip: str = "172.16.0.10",
+    dst_ip: str = "192.168.1.50",
+    dst_ports: list[int] | None = None,
+    hits_per_port: int = 4,
+) -> None:
+    """Simulate blocked inter-VLAN lateral movement (Tier 1 `internal_lateral_blocked`)."""
+    ports = dst_ports or [443, 8080]
+    print(
+        f"[Lateral] Simulating Tier 1 inter-VLAN blocked traffic {src_ip} -> {dst_ip} on ports {ports}..."
+    )
+    for p_idx, dst_port in enumerate(ports):
+        for i in range(hits_per_port):
+            msg = build_filterlog_ipv4(
+                interface="igc1",
+                action="block",
+                direction="in",
+                proto="tcp",
+                src_ip=src_ip,
+                dst_ip=dst_ip,
+                src_port=51000 + (p_idx * 100) + i,
+                dst_port=dst_port,
+                tcp_flags="S",
+            )
+            send_udp_syslog(host, port, msg)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Simulate pfSense Syslog traffic for PfsenseMon.")
     parser.add_argument("--host", default="127.0.0.1", help="Vector UDP host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=5140, help="Vector UDP port (default: 5140)")
     parser.add_argument(
         "--scenario",
-        choices=["all", "noise", "portscan", "outbound", "auth"],
+        choices=["all", "noise", "portscan", "outbound", "auth", "lateral"],
         default="all",
         help="Traffic scenario to simulate (default: all)",
+    )
+    parser.add_argument("--src-ip", default="172.16.0.10", help="Source IP for lateral scenario")
+    parser.add_argument("--dst-ip", default="192.168.1.50", help="Destination IP for lateral scenario")
+    parser.add_argument(
+        "--dst-ports",
+        default="443,8080",
+        help="Comma-separated destination ports for lateral scenario (default: 443,8080)",
     )
     args = parser.parse_args()
 
@@ -137,6 +173,15 @@ def main() -> None:
         simulate_suspicious_outbound(args.host, args.port)
     if args.scenario in ("all", "auth"):
         simulate_auth_anomaly(args.host, args.port)
+    if args.scenario == "lateral":
+        parsed_ports = [int(p.strip()) for p in args.dst_ports.split(",") if p.strip().isdigit()]
+        simulate_lateral_blocked(
+            args.host,
+            args.port,
+            src_ip=args.src_ip,
+            dst_ip=args.dst_ip,
+            dst_ports=parsed_ports,
+        )
 
     print(
         "\nDone! Note: Vector's 60-second reduce window flushes Tier 3 summaries within ~60s.\n"

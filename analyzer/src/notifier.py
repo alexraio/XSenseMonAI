@@ -9,6 +9,7 @@ import re
 import httpx
 
 from .config import AppConfig
+from .known_flows import build_flow_suggestions
 from .log_redaction import mask_identifier
 from .models import AISecurityReport, FilterEvaluationResult
 
@@ -114,6 +115,23 @@ class TelegramNotifier:
                 return f"{escaped_ip} ({html.escape(label)})"
         return escaped_ip
 
+    @staticmethod
+    def _format_known_flow_suggestions_html(evaluation: FilterEvaluationResult) -> list[str]:
+        """Build copy-pasteable `known_flows.json` snippets for Tier 1 flows."""
+        if not evaluation.tier1_anomalies:
+            return []
+        suggestions = build_flow_suggestions(evaluation.tier1_anomalies, max_suggestions=3)
+        if not suggestions:
+            return []
+        out: list[str] = [
+            "\n💡 <b>Known Flow Suppression (if benign):</b>",
+            "<i>Add to <code>config/known_flows.json</code>:</i>",
+        ]
+        for suggestion in suggestions:
+            snippet = suggestion.to_json_snippet()
+            out.append(f"<code>{html.escape(snippet)}</code>")
+        return out
+
     def send_ai_report(
         self,
         report: AISecurityReport,
@@ -151,6 +169,8 @@ class TelegramNotifier:
             if remaining > 0:
                 ips_str += f" <i>(+{remaining} more)</i>"
             lines.append(f"\n<b>📌 Involved IPs:</b> {ips_str}")
+
+        lines.extend(self._format_known_flow_suggestions_html(evaluation))
 
         lines.append(
             f"\n<i>🤖 Model: {html.escape(report.model_used)} "
@@ -205,6 +225,8 @@ class TelegramNotifier:
                 lines.append(
                     f"• {self._format_ip_html(t3.src_ip, evaluation)}: {t3.total_blocked_hits} blocked hits across {t3.distinct_ports_count} port(s)"
                 )
+
+        lines.extend(self._format_known_flow_suggestions_html(evaluation))
 
         return self._send_html_message("\n".join(lines))
 

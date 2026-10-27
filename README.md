@@ -264,8 +264,10 @@ LLM_MODEL=google/gemini-2.5-flash
 | `WAN_BLOCK_HIT_THRESHOLD` | Blocked packets from 1 IP to trigger Tier 3 | `50` |
 | `WAN_PORT_SCAN_THRESHOLD` | Distinct ports from 1 IP to flag a Port Scan | `8` |
 | `ALERT_DEDUP_TTL_MINUTES` | Cooldown before re-alerting on the same offender | `120` |
-| `WHITELIST_INTERNAL_IPS` | Comma-separated LAN IPs excluded from Tier 1 | `192.168.1.50` |
+| `WHITELIST_INTERNAL_IPS` | Comma-separated LAN IPs excluded only from Tier 1 allowed uncommon-port checks | `192.168.1.50` |
 | `WHITELIST_OUTBOUND_PORTS` | Standard outbound ports excluded from Tier 1 pass | `53,80,123,443,465,587,853,993,51820,1194` |
+| `WHITELIST_FLOWS` | Semicolon-separated granular flow rules (`src>dst:ports[/proto]`) | `172.16.0.10>192.168.1.50:443,8080` |
+| `KNOWN_FLOWS_PATH` | Path to hot-reloaded JSON file of authorized flows & device descriptions | `config/known_flows.json` |
 
 > **Automatic Telegram `chat_id` Discovery**: If you don't know your numeric Telegram `chat_id`, put your bot's username in `TELEGRAM_CHAT_ID`, open Telegram, search for your bot, and press **Start (`/start`)**. On the next analysis cycle, `TelegramNotifier` automatically resolves your numeric ID via `/getUpdates`.
 

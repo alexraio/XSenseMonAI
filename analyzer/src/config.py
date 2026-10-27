@@ -20,6 +20,17 @@ def _parse_csv_set(value: str | None) -> set[str]:
     return {item.strip() for item in value.split(",") if item.strip()}
 
 
+def _parse_flow_set(value: str | None) -> set[str]:
+    """Parse semicolon-separated compact flow rules (e.g. `172.16.0.10>192.168.1.50:443,8080`)."""
+    if not value:
+        return set()
+    return {
+        chunk.strip()
+        for chunk in value.replace("\n", ";").split(";")
+        if chunk.strip()
+    }
+
+
 def normalize_anthropic_base_url(url: str | None) -> str:
     """Normalize an Anthropic-compatible base URL (strips trailing /v1/messages or /v1)."""
     cleaned = (url or "").strip().rstrip("/")
@@ -114,7 +125,7 @@ class AppConfig:
     alert_dedup_ttl_minutes: int = 120
     max_prompt_items_per_tier: int = 25
 
-    # Whitelists
+    # Whitelists & Known Flows
     whitelist_internal_ips: set[str] = field(default_factory=set)
     whitelist_external_ips: set[str] = field(default_factory=set)
     whitelist_outbound_ports: set[str] = field(
@@ -131,6 +142,8 @@ class AppConfig:
             "1194",
         }
     )
+    whitelist_flows: set[str] = field(default_factory=set)
+    known_flows_path: Path | None = None
 
     # State persistence path for deduplication cache
     state_file_path: Path = Path("/app/state/dedup_cache.json")
@@ -267,6 +280,10 @@ class AppConfig:
             whitelist_external_ips=_parse_csv_set(os.getenv("WHITELIST_EXTERNAL_IPS")),
             whitelist_outbound_ports=_parse_csv_set(
                 os.getenv("WHITELIST_OUTBOUND_PORTS", default_ports)
+            ),
+            whitelist_flows=_parse_flow_set(os.getenv("WHITELIST_FLOWS")),
+            known_flows_path=Path(
+                os.getenv("KNOWN_FLOWS_PATH", "config/known_flows.json")
             ),
             state_file_path=Path(
                 os.getenv("STATE_FILE_PATH", "/tmp/pfsensemon_dedup_cache.json")

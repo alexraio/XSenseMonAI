@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -114,6 +114,8 @@ class FilterEvaluationResult(BaseModel):
     tier3_offenders: list[WanOffenderSummary] = Field(default_factory=list)
     total_raw_wan_blocks: int = 0
     suppressed_by_dedup_count: int = 0
+    suppressed_by_known_flows_count: int = 0
+    known_flows_context: list[dict[str, Any]] = Field(default_factory=list)
     ip_geoip_map: dict[str, GeoIPInfo] = Field(default_factory=dict)
 
 

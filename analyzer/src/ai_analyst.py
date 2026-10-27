@@ -34,6 +34,7 @@ You receive pre-aggregated telemetry across 3 Security Tiers:
 3. Tier 3 (`tier3_offenders`): External IPs blocked on the WAN that exceeded volume or port-scanning thresholds. Distinguish targeted multi-port reconnaissance or brute-force spikes from harmless background noise.
 
 Note: External IP entries may include `dst_geoip` or `src_geoip` metadata (`country`, `country_code`, `city`, `isp`, `asn`). Incorporate relevant geographical and ASN/ISP context into your findings.
+If `known_authorized_flows` is present in the payload, it lists known legitimate internal/outbound flows for the involved hosts (already suppressed by the pre-filter). Use those descriptions to identify device roles when an host exhibits new anomalous connections on unlisted ports or targets.
 
 CRITICAL: Do not output any thinking process, explanation, notes, or prelude. Start directly with the opening curly brace '{{' and output strictly a valid JSON object matching this exact schema:
 {{
@@ -147,6 +148,8 @@ class AnthropicSOCAnalyst:
                 item.model_dump(exclude_none=True) for item in evaluation.tier3_offenders
             ],
         }
+        if evaluation.known_flows_context:
+            payload_dict["known_authorized_flows"] = evaluation.known_flows_context
 
         user_message = (
             "Analyze the following aggregated pfSense firewall security telemetry and return "

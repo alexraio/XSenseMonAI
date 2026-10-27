@@ -25,11 +25,12 @@ env/
 .coverage.*
 htmlcov/
 
-# Local deduplication state & runtime caches
+# Local deduplication state, user-specific known flows & runtime caches
 *dedup_cache*.json
 dedup_cache.json
 state.json
 *.state
+config/known_flows.json
 
 # Temporary files, packet captures & logs
 *.log

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import signal
 import sys
@@ -16,6 +17,7 @@ from .ai_analyst import AnthropicSOCAnalyst
 from .config import AppConfig
 from .filter_engine import ZeroTokenFilterEngine
 from .geoip import enrich_evaluation_with_geoip
+from .known_flows import parse_compact_flow_rule
 from .log_redaction import configure_logging
 from .loki_client import LokiClient
 from .notifier import TelegramNotifier
@@ -108,10 +110,11 @@ def run_analysis_window(
 
     if not evaluation.should_invoke_ai:
         logger.info(
-            "Zero-Token Filter: No anomalies exceeded thresholds (raw_wan_blocks=%d, dedup_suppressed=%d). "
+            "Zero-Token Filter: No anomalies exceeded thresholds (raw_wan_blocks=%d, dedup_suppressed=%d, known_flows_suppressed=%d). "
             "Skipping LLM call (provider=%s, 0 tokens spent).",
             evaluation.total_raw_wan_blocks,
             evaluation.suppressed_by_dedup_count,
+            evaluation.suppressed_by_known_flows_count,
             config.llm_provider,
         )
         return CycleOutcome.COMPLETED
@@ -230,6 +233,31 @@ def main() -> int:
         action="store_true",
         help="Clear the deduplication cache before running the cycle.",
     )
+    parser.add_argument(
+        "--list-flows",
+        action="store_true",
+        help="List all configured Known Flow suppression rules and exit.",
+    )
+    parser.add_argument(
+        "--add-flow",
+        type=str,
+        default=None,
+        metavar="SRC>DST:PORTS[/PROTO]",
+        help="Add or merge a Known Flow rule into known_flows.json and exit (e.g. '172.16.0.10>192.168.1.50:443,8080').",
+    )
+    parser.add_argument(
+        "--flow-desc",
+        type=str,
+        default="",
+        help="Human-readable description when using --add-flow.",
+    )
+    parser.add_argument(
+        "--remove-flow",
+        type=str,
+        default=None,
+        metavar="FLOW_ID",
+        help="Remove a Known Flow rule by ID from known_flows.json and exit.",
+    )
     args = parser.parse_args()
 
     config = AppConfig.from_env()
@@ -243,6 +271,29 @@ def main() -> int:
     filter_engine = ZeroTokenFilterEngine(config=config)
     analyst = AnthropicSOCAnalyst(config=config)
     notifier = TelegramNotifier(config=config)
+
+    if args.list_flows:
+        rules = [r.to_file_dict() for r in filter_engine.known_flows.list_rules()]
+        print(json.dumps(rules, indent=2, ensure_ascii=False))
+        return 0
+
+    if args.add_flow:
+        try:
+            rule = parse_compact_flow_rule(args.add_flow, description=args.flow_desc)
+            saved = filter_engine.known_flows.add_rule(rule)
+            print(json.dumps(saved.to_file_dict(), indent=2, ensure_ascii=False))
+            return 0
+        except ValueError as exc:
+            logger.error("Failed to add flow rule: %s", exc)
+            return 1
+
+    if args.remove_flow:
+        removed = filter_engine.known_flows.remove_rule(args.remove_flow)
+        if removed:
+            logger.info("Removed known flow rule '%s'", args.remove_flow)
+            return 0
+        logger.error("Known flow rule '%s' not found", args.remove_flow)
+        return 1
 
     if args.once:
         success = run_analysis_cycle(

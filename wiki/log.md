@@ -261,3 +261,19 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
   - **Universal Multi-Brand Router Roadmap**: Established the explicit strategic roadmap to expand beyond pfSense and OPNsense to **Ubiquiti UniFi OS**, **MikroTik RouterOS**, and **OpenWrt**.
   - Added dedicated `🎯 Project Mission & Goals` section, updated the Mermaid architecture diagram, and introduced the `🗺️ Strategic Roadmap & Multi-Vendor Ecosystem` milestone matrix.
 
+---
+
+## [2026-10-27] feat | Implemented Granular Known Flows Store, Blind-Spot Fix & LLM Topology Context (`feature/known-flows-suppression`)
+
+- Audited `WHITELIST_INTERNAL_IPS` in [`analyzer/src/filter_engine.py`](../analyzer/src/filter_engine.py) and closed a security blind spot:
+  - Previously, adding an internal IP to `WHITELIST_INTERNAL_IPS` suppressed **all** Tier 1 events for that host, including `internal_lateral_blocked` and `outbound_blocked` firewall drops.
+  - Restricted `WHITELIST_INTERNAL_IPS` strictly to allowed `outbound_uncommon_port` flows (`action == "pass"`), ensuring blocked lateral movement or blocked outbound connections are never blindly hidden.
+- Implemented router-agnostic, frontend-ready [`analyzer/src/known_flows.py`](../analyzer/src/known_flows.py) (`KnownFlowRule`, `KnownFlowsStore`, `KnownFlowSuggestion`):
+  - Supports hot-reloaded JSON persistence (`config/known_flows.json`, template in [`config/known_flows.example.json`](../config/known_flows.example.json)), compact `.env` rules (`WHITELIST_FLOWS=172.16.0.10>192.168.1.50:443,8080`), CIDR subnets, port ranges, deterministic rule IDs (`flow-<8hex>`), `enabled` toggles, and atomic CRUD methods (`list_rules`, `add_rule` with automatic port merging, `remove_rule`, `set_rule_enabled`) ready for a future Web UI / REST API.
+  - Added CLI management flags (`--list-flows`, `--add-flow`, `--flow-desc`, `--remove-flow`) in [`analyzer/src/main.py`](../analyzer/src/main.py).
+  - Dual Zero-Token + LLM Context role: matching Tier 1 events are suppressed deterministically at 0 token cost; when an involved host triggers an alert on an unlisted port, `known_authorized_flows` is injected into the LLM payload ([`analyzer/src/ai_analyst.py`](../analyzer/src/ai_analyst.py)) so the model knows the device's legitimate baseline role.
+  - Enhanced [`analyzer/src/notifier.py`](../analyzer/src/notifier.py) to append consolidated, one-tap copyable `known_flows.json` snippets (`Known Flow Suppression`) to Telegram alerts whenever Tier 1 flows are reported.
+- Added `config/known_flows.json` to [`.gitignore`](../.gitignore) to prevent user-specific LAN topologies from being committed, and mounted `./config:/app/config` in [`docker-compose.yml`](../docker-compose.yml).
+- Added 5 unit and integration tests in [`tests/test_known_flows.py`](../tests/test_known_flows.py) and updated [Zero-Token Pre-Filter & Deduplication](concepts/zero-token-filter.md) and [`README.md`](../README.md).
+
+
