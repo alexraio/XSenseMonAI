@@ -1,14 +1,15 @@
 ---
 type: Architecture Concept
 title: Zero-Token Pre-Filter & Deduplication
-description: Local deterministic threshold evaluator and TTL anti-spam cache that prevents unnecessary LLM calls and alert fatigue.
+description: Local deterministic threshold evaluator, granular Known Flows store, and TTL anti-spam cache that prevent unnecessary LLM calls and alert fatigue.
 resource: analyzer/src/filter_engine.py
 tags:
   - cost-control
   - zero-token
   - deduplication
+  - known-flows
   - python
-timestamp: 2026-10-23T20:25:00Z
+timestamp: 2026-10-27T13:18:00Z
 ---
 
 # Zero-Token Pre-Filter & Deduplication
@@ -42,6 +43,22 @@ When an external scanner attacks the WAN continuously for hours, re-alerting on 
 ## 3. Context Window Protection
 
 Before constructing the prompt for `MiniMax-M3` / Claude, `ZeroTokenFilterEngine` sorts offenders by hit volume and truncates each tier to `MAX_PROMPT_ITEMS_PER_TIER` (default: `25`). Even during a massive distributed scan involving thousands of IPs, the prompt size remains bounded (~1,000–1,500 tokens).
+
+---
+
+## 4. Granular Known Flows & LLM Topology Context (`KnownFlowsStore`)
+
+Coarse source-IP whitelisting (`WHITELIST_INTERNAL_IPS`) is restricted solely to allowed `outbound_uncommon_port` connections (`action == "pass"`) so it never masks blocked inter-VLAN lateral movement (`internal_lateral_blocked`) or blocked outbound connections (`outbound_blocked`).
+
+For router-agnostic, fine-grained suppression of known benign flows (e.g., an IoT smart display probing a media player across VLANs), [`analyzer/src/known_flows.py`](../../analyzer/src/known_flows.py) provides `KnownFlowsStore`:
+
+1. **Hot-Reloaded Structured Store (`config/known_flows.json`)**:
+   - Each `KnownFlowRule` has a deterministic `id` (`flow-<8hex>`), `enabled` toggle, `src_ip` (exact IP, CIDR subnet, or `*`), `dst_ip`, `ports` (ports or `start-end` ranges), `proto`, and human-readable `description`.
+   - Also supports compact `.env` rules (`WHITELIST_FLOWS=172.16.0.10>192.168.1.50:443,8080`) and CLI CRUD commands (`--list-flows`, `--add-flow`, `--remove-flow`).
+2. **Dual Role (Zero-Token + LLM Enrichment)**:
+   - **Zero-Token Pre-Filter**: Matching Tier 1 events are suppressed deterministically before threshold evaluation (`0` tokens spent).
+   - **LLM Topology Context**: When an involved host triggers an alert on an *unlisted* port (e.g. `22/SSH`), `known_authorized_flows` is injected into the LLM payload so the analyst knows the device's baseline role.
+   - **Copy-Pasteable Telegram Suggestions**: Whenever Tier 1 anomalies occur, `TelegramNotifier` appends a consolidated one-tap copyable JSON snippet (`Known Flow Suppression`) grouped by `(src_ip, dst_ip)`.
 
 ---
 

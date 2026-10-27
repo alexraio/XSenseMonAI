@@ -66,10 +66,12 @@ services:
       - LOKI_INTERNAL_URL=http://loki:3100
       # Persist dedup cache + scheduler cursor on the named volume (survives container recreation)
       - STATE_FILE_PATH=/app/state/dedup_cache.json
+      - KNOWN_FLOWS_PATH=/app/config/known_flows.json
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - analyzer_state:/app/state
+      - ./config:/app/config
       - ./analyzer/src:/app/src:ro
       - ./scripts:/app/scripts:ro
     networks:

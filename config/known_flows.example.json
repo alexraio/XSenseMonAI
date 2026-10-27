@@ -1,0 +1,14 @@
+[
+  {
+    "id": "flow-example1",
+    "enabled": true,
+    "src_ip": "172.16.0.10",
+    "dst_ip": "192.168.1.50",
+    "ports": [
+      "443",
+      "8080"
+    ],
+    "proto": "tcp",
+    "description": "Smart display to media player inter-VLAN discovery"
+  }
+]

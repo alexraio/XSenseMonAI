@@ -720,16 +720,21 @@ ALERT_DEDUP_TTL_MINUTES=${CFG_ALERT_DEDUP_TTL_MINUTES}
 MAX_PROMPT_ITEMS_PER_TIER=${CFG_MAX_PROMPT_ITEMS_PER_TIER}
 
 # ------------------------------------------------------------------------------
-# 5. Whitelists
+# 5. Whitelists & Known Flows
 # ------------------------------------------------------------------------------
 WHITELIST_INTERNAL_IPS=${CFG_WHITELIST_INTERNAL_IPS}
 WHITELIST_EXTERNAL_IPS=${CFG_WHITELIST_EXTERNAL_IPS}
 WHITELIST_OUTBOUND_PORTS=${CFG_WHITELIST_OUTBOUND_PORTS}
+WHITELIST_FLOWS=${CFG_WHITELIST_FLOWS}
+KNOWN_FLOWS_PATH=${CFG_KNOWN_FLOWS_PATH}
 EOF
 
   chmod 600 "$tmp_env"
   mv -f -- "$tmp_env" "$target_file"
   chmod 600 "$target_file"
+  if [[ -d "${SCRIPT_DIR}/config" && ! -f "${SCRIPT_DIR}/config/known_flows.json" ]]; then
+    printf '[]\n' > "${SCRIPT_DIR}/config/known_flows.json"
+  fi
   log_ok "Saved configuration to ${target_file} (permissions: 0600)."
 }
 
@@ -783,6 +788,8 @@ load_cfg_defaults() {
   CFG_WHITELIST_INTERNAL_IPS="$(cfg_val "$src_file" "WHITELIST_INTERNAL_IPS" "")"
   CFG_WHITELIST_EXTERNAL_IPS="$(cfg_val "$src_file" "WHITELIST_EXTERNAL_IPS" "")"
   CFG_WHITELIST_OUTBOUND_PORTS="$(cfg_val "$src_file" "WHITELIST_OUTBOUND_PORTS" "53,80,123,443,465,587,853,993,51820,1194")"
+  CFG_WHITELIST_FLOWS="$(cfg_val "$src_file" "WHITELIST_FLOWS" "")"
+  CFG_KNOWN_FLOWS_PATH="$(cfg_val "$src_file" "KNOWN_FLOWS_PATH" "config/known_flows.json")"
 }
 
 run_env_wizard() {
@@ -945,6 +952,7 @@ run_env_wizard() {
     prompt_input "Whitelisted Internal LAN IPs (comma-separated)" "$CFG_WHITELIST_INTERNAL_IPS" CFG_WHITELIST_INTERNAL_IPS
     prompt_input "Whitelisted External WAN IPs (comma-separated)" "$CFG_WHITELIST_EXTERNAL_IPS" CFG_WHITELIST_EXTERNAL_IPS
     prompt_input "Whitelisted Outbound Ports (comma-separated)" "$CFG_WHITELIST_OUTBOUND_PORTS" CFG_WHITELIST_OUTBOUND_PORTS
+    prompt_input "Whitelisted Flows (src>dst:ports; semicolon-separated)" "$CFG_WHITELIST_FLOWS" CFG_WHITELIST_FLOWS
   fi
 
   write_env_file "$ENV_FILE"

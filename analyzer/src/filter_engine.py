@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import AppConfig
+from .known_flows import KnownFlowsStore
 from .models import (
     AuthOrAccessSummary,
     FilterEvaluationResult,
@@ -79,11 +80,20 @@ class DeduplicationCache:
 class ZeroTokenFilterEngine:
     """Evaluates normalized Loki events locally and decides whether Anthropic API is needed."""
 
-    def __init__(self, config: AppConfig, dedup_cache: DeduplicationCache | None = None) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        dedup_cache: DeduplicationCache | None = None,
+        known_flows: KnownFlowsStore | None = None,
+    ) -> None:
         self.config = config
         self.dedup = dedup_cache or DeduplicationCache(
             ttl_minutes=config.alert_dedup_ttl_minutes,
             state_path=config.state_file_path,
+        )
+        self.known_flows = known_flows or KnownFlowsStore(
+            file_path=config.known_flows_path,
+            inline_expressions=config.whitelist_flows,
         )
 
     def evaluate(
@@ -93,6 +103,8 @@ class ZeroTokenFilterEngine:
         window_end: datetime,
     ) -> FilterEvaluationResult:
         """Aggregate events into the 3 security tiers and check detection thresholds."""
+        self.known_flows.reload_if_changed()
+
         tier1_groups: dict[tuple[str, str, str, str, str, str], int] = defaultdict(int)
         tier1_flags: dict[tuple[str, str, str, str, str, str], str] = {}
 
@@ -103,6 +115,8 @@ class ZeroTokenFilterEngine:
         tier3_ports_by_ip: dict[str, set[str]] = defaultdict(set)
         tier3_protos_by_ip: dict[str, set[str]] = defaultdict(set)
         total_raw_wan_blocks = 0
+        suppressed_by_known_flows = 0
+        observed_internal_ips: set[str] = set()
 
         for ev in events:
             # Defense-in-depth: ignore out-of-state TCP teardown/keepalive blocks (FA, FPA, A, R without SYN)
@@ -118,7 +132,18 @@ class ZeroTokenFilterEngine:
             # Tier 1: Suspicious Outbound / Internal Lateral Blocked
             # ------------------------------------------------------------------
             if ev.security_tier == "tier_1_outbound_suspicious":
-                if ev.src_ip in self.config.whitelist_internal_ips:
+                observed_internal_ips.add(ev.src_ip)
+                observed_internal_ips.add(ev.dst_ip)
+
+                if self.known_flows.match_event(ev) is not None:
+                    suppressed_by_known_flows += 1
+                    continue
+
+                if (
+                    ev.src_ip in self.config.whitelist_internal_ips
+                    and ev.sub_type == "outbound_uncommon_port"
+                    and ev.action.lower() == "pass"
+                ):
                     continue
                 if ev.dst_ip in self.config.whitelist_external_ips:
                     continue
@@ -262,6 +287,12 @@ class ZeroTokenFilterEngine:
         if should_invoke and new_dedup_keys:
             self.dedup.mark_alerted(new_dedup_keys)
 
+        known_context = (
+            self.known_flows.get_llm_context(relevant_ips=observed_internal_ips)
+            if should_invoke
+            else []
+        )
+
         return FilterEvaluationResult(
             window_start=window_start,
             window_end=window_end,
@@ -272,4 +303,6 @@ class ZeroTokenFilterEngine:
             tier3_offenders=tier3_list,
             total_raw_wan_blocks=total_raw_wan_blocks,
             suppressed_by_dedup_count=suppressed_count,
+            suppressed_by_known_flows_count=suppressed_by_known_flows,
+            known_flows_context=known_context,
         )
