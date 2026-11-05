@@ -46,20 +46,24 @@ Before constructing the prompt for `MiniMax-M3` / Claude, `ZeroTokenFilterEngine
 
 ---
 
-## 4. Granular Known Flows & LLM Topology Context (`KnownFlowsStore`)
+## 4. Granular Identity-Aware Known Flows & LLM Topology Context (`KnownFlowsStore` + `DeviceIdentityStore`)
 
-Coarse source-IP whitelisting (`WHITELIST_INTERNAL_IPS`) is restricted solely to allowed `outbound_uncommon_port` connections (`action == "pass"`) so it never masks blocked inter-VLAN lateral movement (`internal_lateral_blocked`) or blocked outbound connections (`outbound_blocked`).
+Coarse source whitelisting (`WHITELIST_INTERNAL_IPS` — which accepts IPs, Hostnames, or MAC addresses) is restricted solely to allowed `outbound_uncommon_port` connections (`action == "pass"`) so it never masks blocked inter-VLAN lateral movement (`internal_lateral_blocked`) or blocked outbound connections (`outbound_blocked`).
 
-For router-agnostic, fine-grained suppression of known benign flows (e.g., an IoT smart display probing a media player across VLANs), [`analyzer/src/known_flows.py`](../../analyzer/src/known_flows.py) provides `KnownFlowsStore`:
+For router-agnostic, fine-grained suppression of known benign flows across dynamic DHCP networks, [`analyzer/src/known_flows.py`](../../analyzer/src/known_flows.py) (`KnownFlowsStore`) works in tandem with [`analyzer/src/device_identity.py`](../../analyzer/src/device_identity.py) (`DeviceIdentityStore`):
 
-1. **Hot-Reloaded Structured Store (`config/known_flows.json`)**:
-   - Each `KnownFlowRule` has a deterministic `id` (`flow-<8hex>`), `enabled` toggle, `src_ip` (exact IP, CIDR subnet, or `*`), optional `src_ports`, `dst_ip`, `ports` (ports or `start-end` ranges), `proto`, and human-readable `description`.
-   - Also supports compact `.env` rules (`WHITELIST_FLOWS=172.16.0.10>192.168.1.50:443,8080`) and CLI CRUD commands (`--list-flows`, `--add-flow`, `--remove-flow`).
-2. **Dual Role (Zero-Token + LLM Enrichment)**:
-   - **Zero-Token Pre-Filter**: Matching Tier 1 events are suppressed deterministically before threshold evaluation (`0` tokens spent).
+1. **Dynamic DHCP Lease & Reverse DNS Resolution (`DeviceIdentityStore`)**:
+   - Passively ingests `tier_0_dhcp_identity` events (`dhcpd`, `kea-dhcp4`, `dnsmasq-dhcp`) from Loki and persists the active `IP <-> (Hostname, MAC)` map in `/app/state/dhcp_leases.json` (TTL `DHCP_LEASE_TTL_HOURS=168`).
+   - Enforces anti-stale ownership: when a known MAC/Hostname moves to a new IP, its old IP is evicted; when a new device receives an old IP, the record is immediately overwritten so the new host never inherits previous Known Flows.
+   - Falls back to **Reverse DNS (`PTR`)** (`ENABLE_PTR_FALLBACK=true`) with negative caching for internal RFC1918 IPs during Cold Start.
+2. **Hot-Reloaded Identity-Aware Store (`config/known_flows.json`)**:
+   - Each `KnownFlowRule` has a deterministic `id` (`flow-<8hex>`), `enabled` toggle, and supports matching by **Hostname** (`src_host` / `dst_host`, case-insensitive, stripping local suffixes like `.lan` / `.home.arpa` and supporting globs like `iphone-*`), **MAC Address** (`src_mac` / `dst_mac`), and/or **IP/CIDR** (`src_ip` / `dst_ip`), plus `src_ports`, `ports` (`start-end` ranges), `proto`, and `description`.
+   - Also supports compact `.env` rules (`WHITELIST_FLOWS=apple-tv-salotto>192.168.1.50:8008,8009/tcp;00:00:5e:00:53:10>*:6881/udp`) where endpoints are automatically classified as IP/CIDR, MAC, or Hostname, plus CLI commands (`--list-flows`, `--add-flow`, `--remove-flow`, `--list-leases`).
+3. **Dual Role (Zero-Token + LLM Enrichment)**:
+   - **Zero-Token Pre-Filter**: Matching Tier 1 events are suppressed deterministically before threshold evaluation (`0` tokens spent), remaining persistent even when DHCP rotates the device's IP.
    - **Source-Port (`src_ports`) Attribution for P2P/DHT Disambiguation**: `OutboundAnomalySummary` preserves up to 5 distinct `src_ports` per Tier 1 flow group so the LLM distinguishes fixed daemon/P2P source ports (e.g., `6881/UDP` BitTorrent Mainline DHT hitting random peer ports blocked by `pfBlockerNG`) from genuine malware C2 callbacks.
-   - **LLM Topology Context**: When an involved host triggers an alert on an *unlisted* port (e.g. `22/SSH`), `known_authorized_flows` is injected into the LLM payload so the analyst knows the device's baseline role.
-   - **Copy-Pasteable Telegram Suggestions**: Whenever Tier 1 anomalies occur, `TelegramNotifier` appends a consolidated one-tap copyable JSON snippet (`Known Flow Suppression`) grouped by `(src_ip, dst_ip)` or by fixed `src_ports` when a single daemon port contacts multiple external IPs.
+   - **LLM Topology Context**: When an involved host triggers an alert on an *unlisted* port (e.g. `22/SSH`), `known_authorized_flows` (matched by IP, Hostname, or MAC) is injected into the LLM payload so the analyst knows the device's baseline role.
+   - **`Hostname → MAC → IP` Copy-Pasteable Telegram Suggestions**: Whenever Tier 1 anomalies occur, `TelegramNotifier` appends a consolidated one-tap copyable JSON snippet (`Known Flow Suppression`) that automatically prioritizes `"src_host"` first (resilient to Wi-Fi MAC Randomization), falls back to `"src_mac"` for unnamed IoT devices, and uses `"src_ip"` only when neither is known.
 
 ---
 

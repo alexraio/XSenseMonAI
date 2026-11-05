@@ -77,6 +77,22 @@ def simulate_wan_port_scan(host: str, port: int) -> None:
         time.sleep(0.005)
 
 
+def simulate_dhcp_leases(host: str, port: int) -> None:
+    """Simulate pfSense ISC dhcpd and Kea DHCP4 lease allocations (Tier 0 Identity)."""
+    print("[DHCP] Sending synthetic pfSense DHCP lease allocations (dhcpd & kea-dhcp4)...")
+    isc_msg = (
+        "<30>Oct 23 18:29:50 pfSense.localdomain dhcpd[61022]: "
+        "DHCPACK on 192.168.1.145 to 00:00:5e:00:53:10 (workstation-lan) via igb1"
+    )
+    kea_msg = (
+        "<30>Oct 23 18:29:52 pfSense.localdomain kea-dhcp4[61500]: "
+        "INFO [kea-dhcp4.leases] DHCP4_LEASE_ALLOC [hwtype=1 00:00:5e:00:53:20], "
+        "cid=[01:00:00:5e:00:53:20], tid=0x4a11: lease 172.16.0.10 has been allocated for 7200 seconds"
+    )
+    send_udp_syslog(host, port, isc_msg)
+    send_udp_syslog(host, port, kea_msg)
+
+
 def simulate_suspicious_outbound(host: str, port: int) -> None:
     """Simulate an internal LAN host attempting suspicious outbound C2 communication (Tier 1)."""
     internal_host = "192.168.1.145"
@@ -154,7 +170,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=5140, help="Vector UDP port (default: 5140)")
     parser.add_argument(
         "--scenario",
-        choices=["all", "noise", "portscan", "outbound", "auth", "lateral"],
+        choices=["all", "noise", "portscan", "outbound", "auth", "lateral", "dhcp"],
         default="all",
         help="Traffic scenario to simulate (default: all)",
     )
@@ -175,6 +191,8 @@ def main() -> None:
     args = parser.parse_args()
 
     print(f"Sending synthetic pfSense Syslog packets to {args.host}:{args.port}/UDP...")
+    if args.scenario in ("all", "dhcp"):
+        simulate_dhcp_leases(args.host, args.port)
     if args.scenario in ("all", "noise"):
         simulate_background_noise(args.host, args.port)
     if args.scenario in ("all", "portscan"):

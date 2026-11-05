@@ -258,6 +258,11 @@ def main() -> int:
         metavar="FLOW_ID",
         help="Remove a Known Flow rule by ID from known_flows.json and exit.",
     )
+    parser.add_argument(
+        "--list-leases",
+        action="store_true",
+        help="List all active DHCP / Reverse-DNS device identities (IP <-> Hostname <-> MAC) and exit.",
+    )
     args = parser.parse_args()
 
     config = AppConfig.from_env()
@@ -275,6 +280,11 @@ def main() -> int:
     if args.list_flows:
         rules = [r.to_file_dict() for r in filter_engine.known_flows.list_rules()]
         print(json.dumps(rules, indent=2, ensure_ascii=False))
+        return 0
+
+    if args.list_leases:
+        leases = [lease.model_dump() for lease in filter_engine.identity_store.list_leases()]
+        print(json.dumps(leases, indent=2, ensure_ascii=False))
         return 0
 
     if args.add_flow:

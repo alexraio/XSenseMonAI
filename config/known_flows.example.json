@@ -2,25 +2,36 @@
   {
     "id": "flow-example1",
     "enabled": true,
-    "src_ip": "172.16.0.10",
+    "src_host": "smart-display-salotto",
     "dst_ip": "192.168.1.50",
     "ports": [
       "443",
       "8080"
     ],
     "proto": "tcp",
-    "description": "Smart display to media player inter-VLAN discovery"
+    "description": "Smart display (by DHCP/DNS hostname) to media player inter-VLAN discovery"
   },
   {
     "id": "flow-example2",
     "enabled": true,
-    "src_ip": "192.168.1.100",
+    "src_mac": "00:00:5e:00:53:10",
     "src_ports": [
       "6881"
     ],
     "dst_ip": "*",
     "ports": [],
     "proto": "udp",
-    "description": "Authorized BitTorrent DHT daemon peer discovery"
+    "description": "Authorized BitTorrent DHT daemon peer discovery (bound by MAC address)"
+  },
+  {
+    "id": "flow-example3",
+    "enabled": true,
+    "src_ip": "172.16.0.10",
+    "dst_ip": "192.168.1.50",
+    "ports": [
+      "8443"
+    ],
+    "proto": "tcp",
+    "description": "Static IP inter-VLAN flow example"
   }
 ]

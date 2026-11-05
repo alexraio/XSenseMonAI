@@ -15,7 +15,8 @@ Welcome to the **PfsenseMon** LLM Wiki & Open Knowledge Format (OKF) catalog. Ag
 ## Architectural & Security Concepts (`concepts/`)
 
 - [3-Tier Hybrid Monitoring Strategy](concepts/three-tier-hybrid-strategy.md) — Classification of pfSense traffic into Tier 1 (Suspicious Outbound/Lateral), Tier 2 (Auth & Allowed WAN), and Tier 3 (60s Aggregated WAN Blocks).
-- [Zero-Token Pre-Filter & Deduplication](concepts/zero-token-filter.md) — Local Python threshold evaluation and TTL anti-spam cache that prevents unnecessary LLM API calls when traffic is normal.
+- [Zero-Token Pre-Filter & Deduplication](concepts/zero-token-filter.md) — Local Python threshold evaluation, Identity-Aware Known Flows (`Hostname -> MAC -> IP` dynamic DHCP lease tracking), and TTL anti-spam cache that prevent unnecessary LLM API calls when traffic is normal.
+- [Multi-Source DNS Resolver Telemetry & FQDN Flow Correlation](concepts/dns-telemetry-correlation.md) — Ingestion of Unbound/dnsmasq syslog over `UDP 5141`, Flow-to-Domain attribution, and Zero-Token DNS anomaly detection.
 
 ## System Components (`components/`)
 

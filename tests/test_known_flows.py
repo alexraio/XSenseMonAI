@@ -389,3 +389,241 @@ def test_tier1_src_ports_enrichment_and_p2p_dht_flow_suggestion(tmp_path: Path) 
     other_udp = dht_events[0].model_copy(update={"src_port": "55555"})
     assert rule.matches_event(other_udp) is False
 
+
+def test_identity_aware_known_flow_persists_across_dhcp_ip_rotation_and_prevents_inheritance(
+    tmp_path: Path,
+) -> None:
+    """Verify a Known Flow by `src_host` survives DHCP IP rotation and is never inherited when another MAC takes the old IP."""
+    flows_file = tmp_path / "known_flows.json"
+    store = KnownFlowsStore(file_path=flows_file)
+    rule = parse_compact_flow_rule(
+        "apple-tv-salotto>192.168.1.50:8008,8009/tcp",
+        description="Apple TV Cast to Media Server",
+    )
+    assert rule.src_host == "apple-tv-salotto"
+    assert rule.src_ip == "*"
+    store.add_rule(rule)
+
+    cfg = AppConfig(
+        anthropic_api_key="sk-ant-test",
+        known_flows_path=flows_file,
+        state_file_path=tmp_path / "dedup.json",
+        enable_ptr_fallback=False,
+    )
+    engine = ZeroTokenFilterEngine(cfg)
+    now = datetime.now(tz=UTC)
+
+    # Step 1: DHCP assigns 192.168.1.117 to apple-tv-salotto (00:00:5e:00:53:10)
+    window1_events = [
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_0_dhcp_identity",
+            sub_type="dhcp_lease",
+            src_ip="192.168.1.117",
+            src_mac="00:00:5e:00:53:10",
+            src_host="apple-tv-salotto.lan",
+            action="lease_ack",
+        ),
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_1_outbound_suspicious",
+            sub_type="internal_lateral_blocked",
+            src_ip="192.168.1.117",
+            dst_ip="192.168.1.50",
+            dst_port="8008",
+            proto="tcp",
+            action="block",
+            tcp_flags="S",
+        ),
+    ]
+    res1 = engine.evaluate(window1_events, now, now)
+    assert res1.should_invoke_ai is False
+    assert res1.suppressed_by_known_flows_count == 1
+
+    # Step 2: DHCP rotates apple-tv-salotto to a NEW IP (192.168.1.140)
+    window2_events = [
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_0_dhcp_identity",
+            sub_type="dhcp_lease",
+            src_ip="192.168.1.140",
+            src_mac="00:00:5e:00:53:10",
+            src_host="apple-tv-salotto",
+            action="lease_ack",
+        ),
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_1_outbound_suspicious",
+            sub_type="internal_lateral_blocked",
+            src_ip="192.168.1.140",
+            dst_ip="192.168.1.50",
+            dst_port="8009",
+            proto="tcp",
+            action="block",
+            tcp_flags="S",
+        ),
+    ]
+    res2 = engine.evaluate(window2_events, now, now)
+    assert res2.should_invoke_ai is False
+    assert res2.suppressed_by_known_flows_count == 1
+
+    # Step 3: A different device (guest-phone, 00:00:5e:00:53:99) gets the old IP 192.168.1.117
+    # It MUST NOT inherit apple-tv-salotto's whitelist!
+    window3_events = [
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_0_dhcp_identity",
+            sub_type="dhcp_lease",
+            src_ip="192.168.1.117",
+            src_mac="00:00:5e:00:53:99",
+            src_host="guest-phone",
+            action="lease_ack",
+        ),
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_1_outbound_suspicious",
+            sub_type="internal_lateral_blocked",
+            src_ip="192.168.1.117",
+            dst_ip="192.168.1.50",
+            dst_port="8008",
+            proto="tcp",
+            action="block",
+            tcp_flags="S",
+        ),
+    ]
+    res3 = engine.evaluate(window3_events, now, now)
+    assert res3.should_invoke_ai is True
+    assert res3.suppressed_by_known_flows_count == 0
+    assert len(res3.tier1_anomalies) == 1
+    assert res3.tier1_anomalies[0].src_host == "guest-phone"
+    assert res3.tier1_anomalies[0].src_mac == "00:00:5e:00:53:99"
+
+
+def test_hostname_first_and_mac_fallback_in_telegram_flow_suggestions(
+    tmp_path: Path,
+) -> None:
+    """Verify Telegram suggestions prioritize `src_host` first, then `src_mac` (when hostname is empty), then `src_ip`."""
+    cfg = AppConfig(
+        anthropic_api_key="sk-ant-test",
+        state_file_path=tmp_path / "dedup.json",
+        enable_ptr_fallback=False,
+    )
+    engine = ZeroTokenFilterEngine(cfg)
+    now = datetime.now(tz=UTC)
+
+    events = [
+        # Host 1: Has both hostname and MAC -> Suggestion MUST use `src_host`
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_0_dhcp_identity",
+            sub_type="dhcp_lease",
+            src_ip="192.168.1.10",
+            src_mac="00:00:5e:00:53:10",
+            src_host="macbook-pro.home.arpa",
+            action="lease_ack",
+        ),
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_1_outbound_suspicious",
+            sub_type="internal_lateral_blocked",
+            src_ip="192.168.1.10",
+            dst_ip="192.168.1.50",
+            dst_port="9000",
+            proto="tcp",
+            action="block",
+            hit_count=5,
+            tcp_flags="S",
+        ),
+        # Host 2: IoT device with Kea DHCP lease (MAC only, no hostname) -> Suggestion MUST use `src_mac`
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_0_dhcp_identity",
+            sub_type="dhcp_lease",
+            src_ip="172.16.0.55",
+            action="lease_ack",
+            raw_log="kea-dhcp4[123]: INFO DHCP4_LEASE_ALLOC [hwtype=1 00:00:5e:00:53:20]: lease 172.16.0.55 has been allocated",
+        ),
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_1_outbound_suspicious",
+            sub_type="outbound_uncommon_port",
+            src_ip="172.16.0.55",
+            dst_ip="198.51.100.40",
+            dst_port="8883",
+            proto="tcp",
+            action="pass",
+            hit_count=3,
+            tcp_flags="S",
+        ),
+    ]
+    evaluation = engine.evaluate(events, now, now)
+    suggestions = build_flow_suggestions(evaluation.tier1_anomalies)
+    assert len(suggestions) == 2
+
+    # Suggestion 1 (highest hits = 5): Hostname-first
+    s1_json = json.loads(suggestions[0].to_json_snippet())
+    assert s1_json["src_host"] == "macbook-pro"
+    assert "src_ip" not in s1_json
+    assert "src_mac" not in s1_json
+
+    # Suggestion 2 (hits = 3): MAC fallback when hostname is missing
+    s2_json = json.loads(suggestions[1].to_json_snippet())
+    assert s2_json["src_mac"] == "00:00:5e:00:53:20"
+    assert "src_ip" not in s2_json
+    assert "src_host" not in s2_json
+
+    # Verify MAC-based rule matches future events from that MAC on any dynamic IP
+    mac_rule = KnownFlowRule.model_validate(s2_json)
+    moved_iot_event = events[3].model_copy(
+        update={"src_ip": "172.16.0.99", "src_mac": "00:00:5e:00:53:20"}
+    )
+    assert mac_rule.matches_event(moved_iot_event) is True
+
+
+def test_ptr_reverse_dns_fallback_on_cold_start(tmp_path: Path) -> None:
+    """Verify Reverse DNS (`PTR`) resolves internal hostname on Cold Start when no DHCP log has arrived yet."""
+    flows_file = tmp_path / "known_flows.json"
+    store = KnownFlowsStore(file_path=flows_file)
+    store.add_rule(
+        KnownFlowRule.model_validate(
+            {
+                "src_host": "synology-nas",
+                "dst_ip": "198.51.100.90",
+                "ports": ["6281"],
+                "proto": "tcp",
+                "description": "Synology Cloud Sync",
+            }
+        )
+    )
+
+    cfg = AppConfig(
+        anthropic_api_key="sk-ant-test",
+        known_flows_path=flows_file,
+        state_file_path=tmp_path / "dedup.json",
+        enable_ptr_fallback=True,
+    )
+    engine = ZeroTokenFilterEngine(cfg)
+    now = datetime.now(tz=UTC)
+
+    ev = NormalizedLogEvent(
+        timestamp=now,
+        security_tier="tier_1_outbound_suspicious",
+        sub_type="outbound_uncommon_port",
+        src_ip="192.168.1.200",
+        dst_ip="198.51.100.90",
+        dst_port="6281",
+        proto="tcp",
+        action="pass",
+    )
+
+    with patch(
+        "src.device_identity.socket.gethostbyaddr",
+        return_value=("synology-nas.localdomain.", [], ["192.168.1.200"]),
+    ) as mock_ptr:
+        res = engine.evaluate([ev], now, now)
+
+    assert mock_ptr.call_count == 1
+    assert res.should_invoke_ai is False
+    assert res.suppressed_by_known_flows_count == 1
+
+

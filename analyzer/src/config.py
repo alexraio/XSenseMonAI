@@ -106,6 +106,10 @@ class AppConfig:
     # Post-filter GeoIP & ASN enrichment toggle
     enable_geoip: bool = True
 
+    # Dynamic Device Identity & DHCP Lease Resolution settings
+    dhcp_lease_ttl_hours: int = 168
+    enable_ptr_fallback: bool = False
+
     # Telegram Bot settings
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
@@ -153,6 +157,11 @@ class AppConfig:
         """Location of the scheduler cursor file (stored next to the deduplication cache)."""
         return self.state_file_path.with_name("scheduler_state.json")
 
+    @property
+    def dhcp_leases_path(self) -> Path:
+        """Location of the persisted DHCP lease & device identity table."""
+        return self.state_file_path.with_name("dhcp_leases.json")
+
     def __post_init__(self) -> None:
         provider = (self.llm_provider or "anthropic").strip().lower()
         if provider not in SUPPORTED_LLM_PROVIDERS:
@@ -195,6 +204,11 @@ class AppConfig:
             "yes",
         }
         enable_geoip = os.getenv("ENABLE_GEOIP", "true").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        enable_ptr_fallback = os.getenv("ENABLE_PTR_FALLBACK", "true").lower() in {
             "1",
             "true",
             "yes",
@@ -260,6 +274,8 @@ class AppConfig:
             ).strip(),
             openrouter_app_name=os.getenv("OPENROUTER_APP_NAME", "PfsenseMon").strip(),
             enable_geoip=enable_geoip,
+            dhcp_lease_ttl_hours=max(1, int(os.getenv("DHCP_LEASE_TTL_HOURS", "168"))),
+            enable_ptr_fallback=enable_ptr_fallback,
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
             telegram_enable_raw_fallback=raw_fallback,

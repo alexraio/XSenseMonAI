@@ -153,7 +153,16 @@ def cmd_summary(loki_url: str, hours: int, enrich_geoip: bool = True) -> None:
     tier2_events: dict[str, int] = defaultdict(int)
     tier3_ips: dict[str, int] = defaultdict(int)
     tier3_ports: dict[str, set[str]] = defaultdict(set)
+    dhcp_identities: dict[str, str] = {}
     ai_reports: list[dict[str, Any]] = []
+
+    for r in records:
+        if r.get("security_tier") == "tier_0_dhcp_identity" and r.get("action") == "lease_ack":
+            ip_k = str(r.get("src_ip") or "")
+            host_v = str(r.get("client_hostname") or "")
+            mac_v = str(r.get("client_mac") or "")
+            if ip_k and ip_k not in dhcp_identities and (host_v or mac_v):
+                dhcp_identities[ip_k] = f"{host_v} | {mac_v}" if (host_v and mac_v) else (host_v or mac_v)
 
     for r in records:
         tier = r.get("security_tier")
@@ -165,7 +174,8 @@ def cmd_summary(loki_url: str, hours: int, enrich_geoip: bool = True) -> None:
         sub_type = str(r.get("sub_type") or "unknown")
 
         if tier == "tier_1_outbound_suspicious":
-            key = f"{src_ip} -> {dst_ip}:{dst_port}/{proto} ({sub_type})"
+            src_label = f"{src_ip} ({dhcp_identities[src_ip]})" if src_ip in dhcp_identities else src_ip
+            key = f"{src_label} -> {dst_ip}:{dst_port}/{proto} ({sub_type})"
             tier1_flows[key] += hits
         elif tier == "tier_2_access_and_auth":
             key = f"{src_ip} [{sub_type}] port={dst_port}/{proto}"
@@ -245,10 +255,31 @@ def cmd_inspect_ip(
     ports_targeted: set[str] = set()
     src_ports_seen: set[str] = set()
     tiers_seen: set[str] = set()
+    known_hostname = ""
+    known_mac = ""
+    dhcp_history: list[dict[str, Any]] = []
     timeline: list[dict[str, Any]] = []
 
     for r in records:
-        tiers_seen.add(str(r.get("security_tier", "unknown")))
+        tier_str = str(r.get("security_tier", "unknown"))
+        tiers_seen.add(tier_str)
+        if tier_str == "tier_0_dhcp_identity":
+            c_host = str(r.get("client_hostname") or "")
+            c_mac = str(r.get("client_mac") or "")
+            if not known_hostname and c_host:
+                known_hostname = c_host
+            if not known_mac and c_mac:
+                known_mac = c_mac
+            if len(dhcp_history) < 10:
+                dhcp_history.append(
+                    {
+                        "timestamp": r.get("_timestamp_utc"),
+                        "action": r.get("action"),
+                        "ip": r.get("src_ip"),
+                        "mac": c_mac,
+                        "hostname": c_host,
+                    }
+                )
         src_port = str(r.get("src_port") or "0")
         dst_port = str(r.get("dst_port") or "0")
         proto = str(r.get("proto") or "unknown")
@@ -275,6 +306,8 @@ def cmd_inspect_ip(
 
     output = {
         "inspected_ip": ip_address,
+        "known_hostname": known_hostname,
+        "known_mac": known_mac,
         "geoip": geoip_info,
         "window_hours": hours,
         "matching_log_entries": len(records),
@@ -282,6 +315,7 @@ def cmd_inspect_ip(
         "security_tiers_triggered": sorted(tiers_seen),
         "distinct_src_ports_involved": sorted(src_ports_seen)[:30],
         "distinct_ports_involved": sorted(ports_targeted)[:30],
+        "dhcp_lease_history": dhcp_history,
         "recent_timeline": timeline,
     }
     print(json.dumps(output, indent=2, ensure_ascii=False))

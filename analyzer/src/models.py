@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 SecurityTier = Literal[
+    "tier_0_dhcp_identity",
     "tier_1_outbound_suspicious",
     "tier_2_access_and_auth",
     "tier_3_wan_blocked",
@@ -33,6 +34,10 @@ class NormalizedLogEvent(BaseModel):
     hit_count: int = 1
     tcp_flags: str = ""
     raw_log: str = ""
+    src_mac: str = ""
+    src_host: str = ""
+    dst_mac: str = ""
+    dst_host: str = ""
 
 
 class GeoIPInfo(BaseModel):
@@ -75,6 +80,10 @@ class OutboundAnomalySummary(BaseModel):
     src_ports: list[str] = Field(default_factory=list)
     sample_tcp_flags: str = ""
     dst_geoip: GeoIPInfo | None = None
+    src_mac: str = ""
+    src_host: str = ""
+    dst_mac: str = ""
+    dst_host: str = ""
 
 
 class AuthOrAccessSummary(BaseModel):
@@ -88,6 +97,8 @@ class AuthOrAccessSummary(BaseModel):
     total_hits: int
     sample_raw_logs: list[str] = Field(default_factory=list)
     src_geoip: GeoIPInfo | None = None
+    src_mac: str = ""
+    src_host: str = ""
 
 
 class WanOffenderSummary(BaseModel):

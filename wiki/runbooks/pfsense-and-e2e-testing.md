@@ -92,7 +92,7 @@ docker compose exec analyzer python -m src.main --once --reset-dedup
 1. In pfSense WebGUI, navigate to **Status → System Logs → Settings**.
 2. Enable **Send log messages to remote syslog server**.
 3. Set **Remote log servers** to `<DOCKER_HOST_IP>:5140`.
-4. Select **Firewall Events**, **System Events**, **SSH Daemon**, and **VPN Events**.
+4. Select **Firewall Events**, **DHCP service events** (recommended for dynamic `Hostname <-> MAC <-> IP` tracking in Known Flows), **System Events**, **SSH Daemon**, and **VPN Events**.
 5. Click **Save**.
 
 ---

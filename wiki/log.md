@@ -288,5 +288,37 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
 - Enhanced [`hermes_skill/query_pfsense_loki.py`](../hermes_skill/query_pfsense_loki.py) (`cmd_inspect_ip`) to output `src_port` in `recent_timeline` and `distinct_src_ports_involved`.
 - Added unit test `test_tier1_src_ports_enrichment_and_p2p_dht_flow_suggestion` in [`tests/test_known_flows.py`](../tests/test_known_flows.py) (50 total tests passing).
 
+---
+
+## [2026-10-27] brainstorm | Multi-Source DNS Resolver Telemetry, FQDN Flow Correlation & Anomaly Detection Design
+
+- Completed structured `brainstorming` workflow revisiting checkpoint `[2026-10-25] brainstorm | Architectural Review, YAGNI Pivot & Unbound DNS Roadmap Checkpoint`.
+- Reached validated Understanding Lock, confirmed Non-Functional Requirements (NFRs), evaluated 3 architectural options, and finalized incremental design across 4 sections:
+  1. **Strict Passive Role (YAGNI)**: Confirmed PfsenseMon operates strictly as an observer and threat intelligence pipeline, with no active DNS blocking, proxying, or sinkhole mutation (avoiding competition with Pi-hole or `pfBlockerNG`).
+  2. **Multi-Router / Decoupled Schema**: Vector acts as the universal normalizer listening on dedicated `UDP 5141`, converting Unbound/dnsmasq syslog lines into a standardized JSON schema (`event_type: "dns_query"`).
+  3. **Storage & Performance Optimization**: Selective and aggregated ingestion in Vector (full fidelity for `NXDOMAIN`, `SERVFAIL`, and new IP mappings, 60s reduce window for routine queries) with 7-day retention in Loki (vs 30 days for firewall logs).
+  4. **Hybrid Correlation & Zero-Token Anomaly Engine**: Python Analyzer builds in-memory `(client_ip, resolved_ip) -> query_domain` lookup to enrich Tier 1 and Tier 3 flows with FQDNs, and evaluates mathematical metrics (Shannon entropy for DGA, $\ge 15$ `NXDOMAIN` storms, tunneling heuristics) at 0 LLM token cost when normal.
+  5. **Hermes & Reporting Integration**: Extends `AISecurityReport` with `dns_findings`, Telegram alerts with `🌐 DNS Intel`, and Hermes Agent skill with `inspect-dns <ip|domain>`.
+- Documented full design specification in Section 8 of [`DESIGN.md`](../DESIGN.md) and created OKF concept page [`wiki/concepts/dns-telemetry-correlation.md`](concepts/dns-telemetry-correlation.md).
+
+---
+
+## [2026-11-05] feat | Implemented Identity-Aware Known Flows & Dynamic DHCP Lease Resolution (`feature/identity-aware-known-flows`)
+
+- Completed structured `brainstorming` workflow (Understanding Lock, NFRs, 3 architectural options, incremental design validation, and Decision Log) documented in Section 9 of [`DESIGN.md`](../DESIGN.md) to solve ephemeral DHCP IP rotation in `KnownFlowsStore`:
+  1. **Multi-Daemon Passive DHCP Ingestion (`config/vector/vector.yaml`)**:
+     - Added VRL parsing for ISC `dhcpd` (`DHCPACK` / `DHCPRELEASE`), Kea DHCP (`DHCP4_LEASE_ALLOC` / `DHCP4_LEASE_RELEASE`), and `dnsmasq-dhcp` over the existing `UDP 5140` syslog stream (`security_tier = "tier_0_dhcp_identity"`, `sub_type = "dhcp_lease"`).
+  2. **Persistent `DeviceIdentityStore` & Reverse DNS Fallback (`analyzer/src/device_identity.py`)**:
+     - Persists active `IP <-> (Hostname, MAC)` bindings in `/app/state/dhcp_leases.json` (`DHCP_LEASE_TTL_HOURS=168`) and enforces anti-stale ownership (evicting old IPs when a device migrates and immediately overwriting reassigned IPs so new hosts never inherit previous whitelists).
+     - Performs fast Reverse DNS (`PTR`) lookups (`ENABLE_PTR_FALLBACK=true`) with per-cycle negative caching for internal RFC1918 IPs during Cold Start.
+     - Normalizes hostnames (lowercase, stripping `.lan`, `.home.arpa`, `.localdomain`, `.local`, `.internal`, `.home`) and MAC addresses (`aa:bb:cc:dd:ee:ff`).
+  3. **`Hostname -> MAC -> IP` Hierarchy in `KnownFlowsStore` & Telegram Suggestions (`analyzer/src/known_flows.py`)**:
+     - Extended `KnownFlowRule` and `parse_compact_flow_rule` to match `src_host`/`dst_host` (including glob patterns like `iphone-*`), `src_mac`/`dst_mac`, and `src_ip`/`dst_ip`.
+     - Updated `build_flow_suggestions` so copy-pasteable Telegram `Known Flow Suppression` snippets prioritize `"src_host"` first (surviving Wi-Fi MAC Randomization), fall back to `"src_mac"` for unnamed IoT devices, and use `"src_ip"` only when neither is available.
+     - Added `--list-leases` CLI flag in [`analyzer/src/main.py`](../analyzer/src/main.py) and enriched [`analyzer/src/notifier.py`](../analyzer/src/notifier.py), [`analyzer/src/ai_analyst.py`](../analyzer/src/ai_analyst.py), and [`hermes_skill/query_pfsense_loki.py`](../hermes_skill/query_pfsense_loki.py) with resolved device identities.
+  4. **Verification**: Added 3 comprehensive unit and integration tests in [`tests/test_known_flows.py`](../tests/test_known_flows.py) covering DHCP IP rotation persistence, anti-inheritance on IP reuse, `Hostname -> MAC -> IP` Telegram suggestion hierarchy, and Cold Start `PTR` resolution.
+
+
+
 
 
