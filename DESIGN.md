@@ -207,3 +207,77 @@ PfsenseMon/
    - `smoke_test`: Executes `simulate_pfsense_logs.py` and `python -m src.main --once --reset-dedup` inside `pfsensemon-analyzer` (Fast ~10s or Full ~65s; Dry-Run or Live AI + Telegram).
    - `print_next_steps`: Outputs pre-filled configuration snippets for pfSense Remote Syslog, Grafana Loki Data Source, and the Hermes Agent skill using the detected `<HOST_IP>`.
 
+---
+
+## 8. Multi-Source DNS Resolver Telemetry & FQDN Flow Correlation
+
+### 8.1 Understanding Summary
+- **What is being designed**: A decoupled, router-agnostic DNS ingestion, normalisation, and correlation layer in PfsenseMon that attributes Layer 3/4 firewall flows to resolved Domain Names (FQDNs) and deterministically detects native DNS threats (DGA malware, `NXDOMAIN` storms, tunneling, and IoT anomaly beacons).
+- **Why it exists**: Packet filtering logs alone produce "firewall blindness" against modern Anycast CDN IPs (Cloudflare, AWS, Akamai) where thousands of legitimate and malicious services share identical IP addresses. Correlating DNS queries captures the intent *before* packet establishment, while spotting threats that never produce successful L3/L4 TCP/UDP connections (`NXDOMAIN` failures).
+- **Target Audience**: Homelab operators, prosumers, and small business network administrators seeking actionable, human-readable security intelligence without enterprise SIEM complexity.
+- **Key Constraints**:
+  - **Decoupled & Agnostic Schema**: Vector acts as the universal normalizer. Initial reference implementation targets pfSense/OPNsense native **Unbound**, but outputs a unified JSON schema compatible with `dnsmasq` (OpenWrt, UniFi), Pi-hole (`FTL`), and AdGuard Home.
+  - **Storage & Scale Management**: Ingestion in Vector is selective and aggregated. Error responses (`NXDOMAIN`, `SERVFAIL`) and unique IP-domain mappings are retained with high fidelity; routine repetitive queries are aggregated over 60s windows with a 7-day retention in Loki (vs 30 days for firewall logs).
+  - **Strict Zero-Token & Privacy Preservation**: Routine web browsing queries are NEVER submitted to the LLM. Only resolved domains directly linked to alerted Tier 1/3 firewall events or mathematically validated DNS anomalies enter the AI analyst prompt payload.
+  - **Graceful Fail-Open Degradation**: Soft dependency on DNS telemetry. If DNS logging is disabled or absent on the router, PfsenseMon logs an `INFO` note and continues monitoring firewall telemetry with zero interruptions or crashes.
+- **Explicit Non-Goals**:
+  - No active DNS proxying, forwarding, or recursive server implementation (PfsenseMon is strictly an observer).
+  - No active sinkholing or domain blocking mutation (does not replace Pi-hole or `pfBlockerNG`).
+  - No indefinite storage of raw user web browsing histories.
+
+### 8.2 Assumptions & Non-Functional Requirements
+- **Correlation Window**: Temporal correlation occurs across an in-memory sliding window matching the analysis interval (`ANALYSIS_INTERVAL_MINUTES=60`).
+- **Internal Domain Exclusions**: Local suffixes (`.lan`, `.local`, `.home.arpa`, `in-addr.arpa`) are excluded from DGA/anomaly algorithms to prevent false positives from mDNS or local service discovery.
+- **Dedicated Syslog Ingestion Port**: Vector listens on a distinct port (e.g. `UDP 5141`) to completely decouple DNS syslog ingestion from `UDP 5140` firewall packet parsing.
+
+### 8.3 DNS Decision Log
+
+| # | Decision | Alternatives Considered | Rationale |
+| :--- | :--- | :--- | :--- |
+| **D1** | **Strict Passive Observability & Threat Intelligence Role** | Active DNS blocking via API or generating sinkhole blocklists | Upholds YAGNI; avoids race conditions, false-positive disruptions, and feature overlap with native pfSense tools (`pfBlockerNG`) or Pi-hole. |
+| **D2** | **Decoupled & Agnostic Universal Schema (Vector Normalizer)** | Tightly coupled pfSense Unbound-only ingestion | Enables immediate implementation for pfSense/OPNsense while remaining 100% prepared for the multi-brand roadmap (`dnsmasq`, UniFi, OpenWrt, Pi-hole). |
+| **D3** | **Selective Ingestion & Aggregation with 7-Day Loki Retention** | Storing 100% of raw queries for 30 days; volatile in-memory-only cache | Protects host SSD I/O and Loki query performance while preserving full forensics for all failures (`NXDOMAIN`, `SERVFAIL`) and distinct IP mappings. |
+| **D4** | **Decoupled Vector Pipeline + Hybrid Correlation in Python Analyzer** | Real-time stream-join inside Vector VRL; separate SQLite database container | Simplest, stateless, robust architecture with zero new container services, 100% testable via unit tests and synthetic logs. |
+
+### 8.4 Architecture, Components & Data Flow
+
+```mermaid
+flowchart LR
+    A["pfSense / OPNsense<br/>(Unbound Syslog UDP 5141)"] --> VEC["Vector Ingestion & Normalizer<br/>(config/vector/vector.yaml)"]
+    B["Multi-Brand / Pi-hole / dnsmasq<br/>(Syslog UDP 5141)"] -.-> VEC
+    VEC -->|Stream: service='dns'<br/>7-Day Retention| LOKI["Grafana Loki<br/>(TCP 3100)"]
+    LOKI -->|LogQL Query Window| PY["Python Analyzer<br/>(analyzer/src/dns_engine.py)"]
+    PY -->|Map client_ip + resolved_ip -> domain| FILT["Filter Engine<br/>(Flow-to-Domain Enrichment)"]
+    PY -->|NXDOMAIN Storms & Shannon Entropy| ANOM["DNS Threat Detector<br/>(DGA & Tunneling)"]
+    FILT & ANOM -->|Zero-Token Check| AI["AI Analyst (LLM)<br/>(Structured Output)"]
+    AI --> TG["Telegram Alerts & Loki Ingestion"]
+    HERMES["Hermes Agent Skill<br/>(inspect-dns)"] -.->|TCP 3100| LOKI
+```
+
+1. **Vector Pipeline (`config/vector/vector.yaml`)**:
+   - Listens on `0.0.0.0:5141/UDP` for DNS syslog events.
+   - VRL Remap parses Unbound/dnsmasq syslog records into a unified JSON format:
+     `{ "event_type": "dns_query", "client_ip": "...", "query_domain": "...", "qtype": "A", "rcode": "NOERROR", "resolved_ips": [...] }`.
+   - Filters and aggregates repetitive `NOERROR` queries over a 60-second reduce window, tagging Loki stream `{service="dns", rcode="..."}` with a 7-day retention policy.
+2. **DNS Correlation Engine (`analyzer/src/dns_engine.py`)**:
+   - Fetches `{service="dns"}` records for the analysis window.
+   - Builds an in-memory lookup table: `(client_ip, resolved_ip) -> query_domain`.
+   - Enriches Tier 1 outbound flows (`OutboundAnomalySummary`) and Tier 3 WAN offenders with `resolved_domain`.
+   - Evaluates mathematical anomalies:
+     - **`NXDOMAIN` Storm**: Threshold of $\ge 15$ unique unresolved queries per host.
+     - **DGA Entropy**: Shannon entropy calculation flagging high-randomness domains without vowels.
+     - **Tunneling**: Domains with length $> 50$ characters or abnormal `TXT` record query bursts.
+3. **Structured Output & Reporting**:
+   - Extends `AISecurityReport` schema in `analyzer/src/models.py` with `dns_findings: list[DNSFinding]`.
+   - Injects domain names into Telegram alerts (`analyzer/src/notifier.py`) with a dedicated `🌐 DNS Intel` section.
+4. **Hermes Agent SOC Skill (`hermes_skill/query_pfsense_loki.py`)**:
+   - Extends `inspect-ip` to list recently resolved domains and adds command `inspect-dns <ip|domain>` for on-demand conversational threat hunting.
+
+### 8.5 Resilience, Edge Cases & Verification Strategy
+- **Fail-Open Resilience**: If DNS telemetry is missing or disabled, the analyzer logs an `INFO` notice and proceeds seamlessly with firewall-only analysis.
+- **Corrupted Lines**: Vector drops invalid syslog lines using VRL `abort` without interrupting log processing.
+- **DoH / DoT Detection**: The analyzer flags outbound firewall traffic to known public DoH/DoT endpoints as potential policy bypasses.
+- **Automated Verification**:
+  - Synthetic DNS query generator in `scripts/simulate_pfsense_logs.py`.
+  - Comprehensive unit and regression test suite covering VRL syntax validation, in-memory IP-to-domain mapping, Zero-Token enforcement, and fail-open resilience.
+

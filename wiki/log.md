@@ -288,5 +288,19 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
 - Enhanced [`hermes_skill/query_pfsense_loki.py`](../hermes_skill/query_pfsense_loki.py) (`cmd_inspect_ip`) to output `src_port` in `recent_timeline` and `distinct_src_ports_involved`.
 - Added unit test `test_tier1_src_ports_enrichment_and_p2p_dht_flow_suggestion` in [`tests/test_known_flows.py`](../tests/test_known_flows.py) (50 total tests passing).
 
+---
+
+## [2026-10-27] brainstorm | Multi-Source DNS Resolver Telemetry, FQDN Flow Correlation & Anomaly Detection Design
+
+- Completed structured `brainstorming` workflow revisiting checkpoint `[2026-10-25] brainstorm | Architectural Review, YAGNI Pivot & Unbound DNS Roadmap Checkpoint`.
+- Reached validated Understanding Lock, confirmed Non-Functional Requirements (NFRs), evaluated 3 architectural options, and finalized incremental design across 4 sections:
+  1. **Strict Passive Role (YAGNI)**: Confirmed PfsenseMon operates strictly as an observer and threat intelligence pipeline, with no active DNS blocking, proxying, or sinkhole mutation (avoiding competition with Pi-hole or `pfBlockerNG`).
+  2. **Multi-Router / Decoupled Schema**: Vector acts as the universal normalizer listening on dedicated `UDP 5141`, converting Unbound/dnsmasq syslog lines into a standardized JSON schema (`event_type: "dns_query"`).
+  3. **Storage & Performance Optimization**: Selective and aggregated ingestion in Vector (full fidelity for `NXDOMAIN`, `SERVFAIL`, and new IP mappings, 60s reduce window for routine queries) with 7-day retention in Loki (vs 30 days for firewall logs).
+  4. **Hybrid Correlation & Zero-Token Anomaly Engine**: Python Analyzer builds in-memory `(client_ip, resolved_ip) -> query_domain` lookup to enrich Tier 1 and Tier 3 flows with FQDNs, and evaluates mathematical metrics (Shannon entropy for DGA, $\ge 15$ `NXDOMAIN` storms, tunneling heuristics) at 0 LLM token cost when normal.
+  5. **Hermes & Reporting Integration**: Extends `AISecurityReport` with `dns_findings`, Telegram alerts with `🌐 DNS Intel`, and Hermes Agent skill with `inspect-dns <ip|domain>`.
+- Documented full design specification in Section 8 of [`DESIGN.md`](../DESIGN.md) and created OKF concept page [`wiki/concepts/dns-telemetry-correlation.md`](concepts/dns-telemetry-correlation.md).
+
+
 
 
