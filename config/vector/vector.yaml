@@ -44,6 +44,8 @@ transforms:
       security_tier = "unknown"
       sub_type = "unknown"
       raw_log = ""
+      client_mac = ""
+      client_hostname = ""
 
       # ------------------------------------------------------------------------
       # Branch A: pfSense Packet Filter Logs (filterlog CSV format)
@@ -164,9 +166,57 @@ transforms:
         } else {
           abort
         }
+      } else if contains(raw, "DHCPACK") || contains(raw, "DHCPRELEASE") || contains(raw, "DHCP4_LEASE_ALLOC") || contains(raw, "DHCP4_LEASE_RELEASE") {
+        # ----------------------------------------------------------------------
+        # Branch B: pfSense / Multi-Router DHCP Lease Events (dhcpd, kea-dhcp4, dnsmasq)
+        # ----------------------------------------------------------------------
+        security_tier = "tier_0_dhcp_identity"
+        sub_type = "dhcp_lease"
+        direction = "in"
+        iface = "dhcp"
+        raw_log = raw
+
+        if contains(raw, "RELEASE") {
+          action = "lease_release"
+        } else {
+          action = "lease_ack"
+        }
+
+        # 1. ISC dhcpd format: DHCPACK on 192.168.1.117 to 00:00:5e:00:53:10 (hostname) via igb1
+        m_isc, err_isc = parse_regex(raw, r'DHCP(?:ACK|RELEASE)\s+(?:on|of)\s+(?P<ip>(?:\d{1,3}\.){3}\d{1,3})\s+(?:to|from)\s+(?P<mac>(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})(?:\s+\((?P<host>[^)]+)\))?(?:\s+via\s+(?P<iface>[a-zA-Z0-9_.\-]+))?')
+        if err_isc == null {
+          src_ip = to_string(m_isc.ip)
+          client_mac = downcase(to_string(m_isc.mac))
+          if m_isc.host != null {
+            client_hostname = downcase(to_string(m_isc.host))
+          }
+          if m_isc.iface != null {
+            iface = downcase(to_string(m_isc.iface))
+          }
+        } else {
+          # 2. Kea DHCP4 format: DHCP4_LEASE_ALLOC [hwtype=1 00:00:5e:00:53:10]... lease 192.168.1.117
+          m_kea, err_kea = parse_regex(raw, r'DHCP4_LEASE_(?:ALLOC|RELEASE).*?(?P<mac>(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}).*?lease\s+(?P<ip>(?:\d{1,3}\.){3}\d{1,3})')
+          if err_kea == null {
+            src_ip = to_string(m_kea.ip)
+            client_mac = downcase(to_string(m_kea.mac))
+          } else {
+            # 3. dnsmasq-dhcp format: DHCPACK(br-lan) 192.168.1.50 00:00:5e:00:53:10 hostname
+            m_dnsm, err_dnsm = parse_regex(raw, r'DHCP(?:ACK|RELEASE)\((?P<iface>[^)]+)\)\s+(?P<ip>(?:\d{1,3}\.){3}\d{1,3})\s+(?P<mac>(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})(?:\s+(?P<host>[a-zA-Z0-9_.\-]+))?')
+            if err_dnsm == null {
+              src_ip = to_string(m_dnsm.ip)
+              client_mac = downcase(to_string(m_dnsm.mac))
+              iface = downcase(to_string(m_dnsm.iface))
+              if m_dnsm.host != null {
+                client_hostname = downcase(to_string(m_dnsm.host))
+              }
+            } else {
+              abort
+            }
+          }
+        }
       } else {
         # ----------------------------------------------------------------------
-        # Branch B: pfSense Authentication, VPN & Control Plane Daemons
+        # Branch C: pfSense Authentication, VPN & Control Plane Daemons
         # ----------------------------------------------------------------------
         raw_lower = downcase(raw)
         is_auth_daemon = contains(raw_lower, "sshd") ||
@@ -212,6 +262,8 @@ transforms:
       .security_tier = security_tier
       .sub_type = sub_type
       .raw_log = raw_log
+      .client_mac = client_mac
+      .client_hostname = client_hostname
 
       del(.message)
       del(.source_type)
@@ -221,7 +273,7 @@ transforms:
     inputs:
       - parse_and_classify
     route:
-      high_priority: '.security_tier == "tier_1_outbound_suspicious" || .security_tier == "tier_2_access_and_auth"'
+      high_priority: '.security_tier == "tier_0_dhcp_identity" || .security_tier == "tier_1_outbound_suspicious" || .security_tier == "tier_2_access_and_auth"'
       wan_blocked: '.security_tier == "tier_3_wan_blocked"'
 
   aggregate_wan_blocks:
@@ -262,6 +314,8 @@ transforms:
       .src_port = to_string(.src_port) ?? "0"
       .dst_port = to_string(.dst_port) ?? "0"
       .proto = to_string(.proto) ?? "unknown"
+      .client_mac = to_string(.client_mac) ?? ""
+      .client_hostname = to_string(.client_hostname) ?? ""
 
 sinks:
   loki_sink:

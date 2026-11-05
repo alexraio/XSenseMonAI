@@ -38,8 +38,8 @@ class LokiClient:
         end_time: datetime,
         limit: int = 5000,
     ) -> list[NormalizedLogEvent]:
-        """Fetch all normalized pfSense log entries across the 3 security tiers."""
-        query = '{app="pfsense", security_tier=~"tier_1_outbound_suspicious|tier_2_access_and_auth|tier_3_wan_blocked"}'
+        """Fetch all normalized pfSense log entries across the 3 security tiers and DHCP identity events."""
+        query = '{app="pfsense", security_tier=~"tier_0_dhcp_identity|tier_1_outbound_suspicious|tier_2_access_and_auth|tier_3_wan_blocked"}'
         params: dict[str, Any] = {
             "query": query,
             "start": str(int(start_time.timestamp() * 1e9)),
@@ -93,6 +93,10 @@ class LokiClient:
                         hit_count=int(parsed.get("hit_count") or 1),
                         tcp_flags=str(parsed.get("tcp_flags") or ""),
                         raw_log=str(parsed.get("raw_log") or ""),
+                        src_mac=str(parsed.get("client_mac") or parsed.get("src_mac") or ""),
+                        src_host=str(parsed.get("client_hostname") or parsed.get("src_host") or ""),
+                        dst_mac=str(parsed.get("dst_mac") or ""),
+                        dst_host=str(parsed.get("dst_host") or ""),
                     )
                 )
 

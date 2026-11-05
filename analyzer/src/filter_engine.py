@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import AppConfig
+from .device_identity import DeviceIdentityStore, normalize_hostname, normalize_mac
 from .known_flows import KnownFlowsStore
 from .models import (
     AuthOrAccessSummary,
@@ -85,6 +86,7 @@ class ZeroTokenFilterEngine:
         config: AppConfig,
         dedup_cache: DeduplicationCache | None = None,
         known_flows: KnownFlowsStore | None = None,
+        identity_store: DeviceIdentityStore | None = None,
     ) -> None:
         self.config = config
         self.dedup = dedup_cache or DeduplicationCache(
@@ -95,6 +97,28 @@ class ZeroTokenFilterEngine:
             file_path=config.known_flows_path,
             inline_expressions=config.whitelist_flows,
         )
+        self.identity_store = identity_store or DeviceIdentityStore(
+            file_path=config.dhcp_leases_path,
+            lease_ttl_hours=config.dhcp_lease_ttl_hours,
+            enable_ptr_fallback=config.enable_ptr_fallback,
+        )
+
+    def _is_whitelisted_internal_source(self, ev: NormalizedLogEvent) -> bool:
+        """Return True if `ev` matches `WHITELIST_INTERNAL_IPS` by IP, Hostname, or MAC."""
+        if not self.config.whitelist_internal_ips:
+            return False
+        if ev.src_ip in self.config.whitelist_internal_ips:
+            return True
+        norm_entries = {item.lower() for item in self.config.whitelist_internal_ips}
+        if ev.src_host and (
+            ev.src_host.lower() in norm_entries
+            or normalize_hostname(ev.src_host) in {normalize_hostname(x) for x in norm_entries}
+        ):
+            return True
+        return bool(
+            ev.src_mac
+            and normalize_mac(ev.src_mac) in {normalize_mac(x) for x in norm_entries if x}
+        )
 
     def evaluate(
         self,
@@ -104,13 +128,16 @@ class ZeroTokenFilterEngine:
     ) -> FilterEvaluationResult:
         """Aggregate events into the 3 security tiers and check detection thresholds."""
         self.known_flows.reload_if_changed()
+        self.identity_store.enrich_events(events)
 
         tier1_groups: dict[tuple[str, str, str, str, str, str], int] = defaultdict(int)
         tier1_flags: dict[tuple[str, str, str, str, str, str], str] = {}
         tier1_src_ports: dict[tuple[str, str, str, str, str, str], list[str]] = defaultdict(list)
+        tier1_identities: dict[tuple[str, str, str, str, str, str], tuple[str, str, str, str]] = {}
 
         tier2_groups: dict[tuple[str, str, str, str, str], int] = defaultdict(int)
         tier2_samples: dict[tuple[str, str, str, str, str], list[str]] = defaultdict(list)
+        tier2_identities: dict[tuple[str, str, str, str, str], tuple[str, str]] = {}
 
         tier3_hits_by_ip: dict[str, int] = defaultdict(int)
         tier3_ports_by_ip: dict[str, set[str]] = defaultdict(set)
@@ -118,8 +145,13 @@ class ZeroTokenFilterEngine:
         total_raw_wan_blocks = 0
         suppressed_by_known_flows = 0
         observed_internal_ips: set[str] = set()
+        observed_internal_hosts: set[str] = set()
+        observed_internal_macs: set[str] = set()
 
         for ev in events:
+            if ev.security_tier == "tier_0_dhcp_identity":
+                continue
+
             # Defense-in-depth: ignore out-of-state TCP teardown/keepalive blocks (FA, FPA, A, R without SYN)
             if (
                 ev.proto.lower() == "tcp"
@@ -135,13 +167,21 @@ class ZeroTokenFilterEngine:
             if ev.security_tier == "tier_1_outbound_suspicious":
                 observed_internal_ips.add(ev.src_ip)
                 observed_internal_ips.add(ev.dst_ip)
+                if ev.src_host:
+                    observed_internal_hosts.add(ev.src_host)
+                if ev.dst_host:
+                    observed_internal_hosts.add(ev.dst_host)
+                if ev.src_mac:
+                    observed_internal_macs.add(ev.src_mac)
+                if ev.dst_mac:
+                    observed_internal_macs.add(ev.dst_mac)
 
                 if self.known_flows.match_event(ev) is not None:
                     suppressed_by_known_flows += 1
                     continue
 
                 if (
-                    ev.src_ip in self.config.whitelist_internal_ips
+                    self._is_whitelisted_internal_source(ev)
                     and ev.sub_type == "outbound_uncommon_port"
                     and ev.action.lower() == "pass"
                 ):
@@ -156,6 +196,8 @@ class ZeroTokenFilterEngine:
 
                 t1_key = (ev.src_ip, ev.dst_ip, ev.dst_port, ev.proto, ev.action, ev.sub_type)
                 tier1_groups[t1_key] += ev.hit_count
+                if t1_key not in tier1_identities:
+                    tier1_identities[t1_key] = (ev.src_host, ev.src_mac, ev.dst_host, ev.dst_mac)
                 if ev.tcp_flags and not tier1_flags.get(t1_key):
                     tier1_flags[t1_key] = ev.tcp_flags
                 if (
@@ -174,6 +216,8 @@ class ZeroTokenFilterEngine:
                     continue
                 t2_key = (ev.src_ip, ev.sub_type, ev.action, ev.dst_port, ev.proto)
                 tier2_groups[t2_key] += ev.hit_count
+                if t2_key not in tier2_identities:
+                    tier2_identities[t2_key] = (ev.src_host, ev.src_mac)
                 if ev.raw_log and len(tier2_samples[t2_key]) < 3:
                     tier2_samples[t2_key].append(ev.raw_log[:220])
 
@@ -198,12 +242,19 @@ class ZeroTokenFilterEngine:
         for (src_ip, dst_ip, dst_port, proto, action, sub_type), hits in sorted(
             tier1_groups.items(), key=lambda x: x[1], reverse=True
         ):
-            dedup_key = f"tier1:{src_ip}:{dst_ip}:{dst_port}:{sub_type}"
+            t1_key = (src_ip, dst_ip, dst_port, proto, action, sub_type)
+            src_host, src_mac, dst_host, dst_mac = tier1_identities.get(t1_key, ("", "", "", ""))
+            src_dedup = src_host or src_mac or src_ip
+            dst_dedup = (
+                (dst_host or dst_mac or dst_ip)
+                if sub_type == "internal_lateral_blocked"
+                else dst_ip
+            )
+            dedup_key = f"tier1:{src_dedup}:{dst_dedup}:{dst_port}:{sub_type}"
             if self.dedup.is_suppressed(dedup_key):
                 suppressed_count += 1
                 continue
             new_dedup_keys.append(dedup_key)
-            t1_key = (src_ip, dst_ip, dst_port, proto, action, sub_type)
             tier1_list.append(
                 OutboundAnomalySummary(
                     src_ip=src_ip,
@@ -215,6 +266,10 @@ class ZeroTokenFilterEngine:
                     total_hits=hits,
                     src_ports=tier1_src_ports.get(t1_key, []),
                     sample_tcp_flags=tier1_flags.get(t1_key, ""),
+                    src_host=src_host,
+                    src_mac=src_mac,
+                    dst_host=dst_host,
+                    dst_mac=dst_mac,
                 )
             )
 
@@ -223,7 +278,10 @@ class ZeroTokenFilterEngine:
         for (src_ip, sub_type, action, dst_port, proto), hits in sorted(
             tier2_groups.items(), key=lambda x: x[1], reverse=True
         ):
-            dedup_key = f"tier2:{src_ip}:{sub_type}:{dst_port}"
+            t2_key = (src_ip, sub_type, action, dst_port, proto)
+            src_host, src_mac = tier2_identities.get(t2_key, ("", ""))
+            src_dedup = src_host or src_mac or src_ip
+            dedup_key = f"tier2:{src_dedup}:{sub_type}:{dst_port}"
             if self.dedup.is_suppressed(dedup_key):
                 suppressed_count += 1
                 continue
@@ -236,7 +294,9 @@ class ZeroTokenFilterEngine:
                     dst_port=dst_port,
                     proto=proto,
                     total_hits=hits,
-                    sample_raw_logs=tier2_samples[(src_ip, sub_type, action, dst_port, proto)],
+                    sample_raw_logs=tier2_samples[t2_key],
+                    src_host=src_host,
+                    src_mac=src_mac,
                 )
             )
 
@@ -296,7 +356,11 @@ class ZeroTokenFilterEngine:
             self.dedup.mark_alerted(new_dedup_keys)
 
         known_context = (
-            self.known_flows.get_llm_context(relevant_ips=observed_internal_ips)
+            self.known_flows.get_llm_context(
+                relevant_ips=observed_internal_ips,
+                relevant_hosts=observed_internal_hosts,
+                relevant_macs=observed_internal_macs,
+            )
             if should_invoke
             else []
         )

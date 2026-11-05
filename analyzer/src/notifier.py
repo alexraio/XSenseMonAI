@@ -105,9 +105,37 @@ class TelegramNotifier:
         return configured
 
     @staticmethod
-    def _format_ip_html(ip: str, evaluation: FilterEvaluationResult) -> str:
-        """Format an IP in HTML <code> tags, appending GeoIP/ASN label when available."""
+    def _lookup_device_identity_label(ip: str, evaluation: FilterEvaluationResult) -> str:
+        """Return a compact `hostname | mac` label for an internal IP if present in evaluation."""
+        for t1 in evaluation.tier1_anomalies:
+            if t1.src_ip == ip and (t1.src_host or t1.src_mac):
+                return (
+                    f"{t1.src_host} | {t1.src_mac}"
+                    if (t1.src_host and t1.src_mac)
+                    else (t1.src_host or t1.src_mac)
+                )
+            if t1.dst_ip == ip and (t1.dst_host or t1.dst_mac):
+                return (
+                    f"{t1.dst_host} | {t1.dst_mac}"
+                    if (t1.dst_host and t1.dst_mac)
+                    else (t1.dst_host or t1.dst_mac)
+                )
+        for t2 in evaluation.tier2_events:
+            if t2.src_ip == ip and (t2.src_host or t2.src_mac):
+                return (
+                    f"{t2.src_host} | {t2.src_mac}"
+                    if (t2.src_host and t2.src_mac)
+                    else (t2.src_host or t2.src_mac)
+                )
+        return ""
+
+    @classmethod
+    def _format_ip_html(cls, ip: str, evaluation: FilterEvaluationResult) -> str:
+        """Format an IP in HTML <code> tags, appending device identity or GeoIP/ASN label when available."""
         escaped_ip = f"<code>{html.escape(ip)}</code>"
+        identity_label = cls._lookup_device_identity_label(ip, evaluation)
+        if identity_label:
+            return f"{escaped_ip} ({html.escape(identity_label)})"
         geo = evaluation.ip_geoip_map.get(ip)
         if geo is not None:
             label = geo.short_label()
@@ -210,8 +238,13 @@ class TelegramNotifier:
                 src_port_suffix = (
                     f":{html.escape(','.join(t1.src_ports[:3]))}" if t1.src_ports else ""
                 )
+                src_id_str = (
+                    f" ({html.escape(t1.src_host or t1.src_mac)})"
+                    if (t1.src_host or t1.src_mac)
+                    else ""
+                )
                 lines.append(
-                    f"• <code>{html.escape(t1.src_ip)}{src_port_suffix}</code> → <code>{html.escape(t1.dst_ip)}:{html.escape(t1.dst_port)}/{html.escape(t1.proto)}</code>{dst_label} "
+                    f"• <code>{html.escape(t1.src_ip)}{src_port_suffix}</code>{src_id_str} → <code>{html.escape(t1.dst_ip)}:{html.escape(t1.dst_port)}/{html.escape(t1.proto)}</code>{dst_label} "
                     f"[{html.escape(t1.action)}] ({t1.total_hits} hits)"
                 )
 
