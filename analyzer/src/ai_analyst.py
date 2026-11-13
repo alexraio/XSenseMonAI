@@ -37,6 +37,7 @@ Note: External IP entries may include `dst_geoip` or `src_geoip` metadata (`coun
 Internal IP entries may also include `src_host`, `src_mac`, `dst_host`, and `dst_mac` resolved from DHCP leases or Reverse DNS. When present, always mention the device hostname/MAC alongside its IP in `key_findings` and `recommended_actions`.
 Each Tier 1 entry also includes `src_ports` (the source port(s) used on the internal host) alongside `dst_port`. Always inspect `src_ports`: if an internal host originates traffic from a fixed, well-known P2P/DHT or daemon port (e.g. `6881/UDP` for BitTorrent Mainline DHT, `51820/UDP` for WireGuard, or `123/UDP` for NTP) towards random high destination ports across residential ISPs, identify it accurately as P2P/DHT peer discovery or service chatter blocked by firewall/pfBlockerNG rules rather than a malware C2 callback.
 If `known_authorized_flows` is present in the payload, it lists known legitimate internal/outbound flows for the involved hosts (already suppressed by the pre-filter). Use those descriptions to identify device roles when an host exhibits new anomalous connections on unlisted ports or targets.
+If `monitoring_mode` is `"steady"`, focus `key_findings`, `recommended_actions`, and `suspicious_ips` strictly on Tier 1 (`tier1_outbound_or_lateral_anomalies`), Tier 2 (`tier2_auth_and_allowed_wan_events`), and any correlated Tier 3 IPs present in `tier3_aggressive_wan_offenders`. Routine WAN block counters (`total_wan_blocked_packets_in_window`, `uncorrelated_wan_scanners_blocked_count`) may be mentioned at most as a single background sentence in `executive_summary`.
 
 CRITICAL: Do not output any thinking process, explanation, notes, or prelude. Start directly with the opening curly brace '{{' and output strictly a valid JSON object matching this exact schema:
 {{
@@ -138,8 +139,10 @@ class AnthropicSOCAnalyst:
         payload_dict: dict[str, Any] = {
             "window_start_utc": evaluation.window_start.isoformat(),
             "window_end_utc": evaluation.window_end.isoformat(),
+            "monitoring_mode": evaluation.active_mode,
             "trigger_reasons": evaluation.trigger_reasons,
             "total_wan_blocked_packets_in_window": evaluation.total_raw_wan_blocks,
+            "uncorrelated_wan_scanners_blocked_count": evaluation.uncorrelated_wan_scanners_count,
             "tier1_outbound_or_lateral_anomalies": [
                 item.model_dump(exclude_none=True) for item in evaluation.tier1_anomalies
             ],

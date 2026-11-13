@@ -30,9 +30,9 @@ The `pfsensemon-analyzer` container (`analyzer/`) is the brain of **PfsenseMon**
 - [`geoip.py`](../../analyzer/src/geoip.py) (`resolve_geoip_batch`, `enrich_evaluation_with_geoip`): Post-filter batch GeoIP/ASN lookup (`country`, `country_code`, `city`, `isp`, `asn`) triggered only when `should_invoke_ai == True` and `ENABLE_GEOIP=true`.
 - [`ai_analyst.py`](../../analyzer/src/ai_analyst.py) (`AnthropicSOCAnalyst` / `SOCAnalyst`): Multi-provider LLM client with exponential backoff, `<think>...</think>` reasoning tag stripping, and structured JSON extraction.
 - [`notifier.py`](../../analyzer/src/notifier.py) (`TelegramNotifier`): Sends HTML-formatted Telegram alerts with automatic numeric `chat_id` discovery via `getUpdates`, inline GeoIP/ASN labels (`DE · Hetzner · AS24940`), and raw fallback alerts if the LLM API is unreachable.
-- [`scheduler.py`](../../analyzer/src/scheduler.py) (`plan_analysis_windows`, `SchedulerState`): Wall-clock window planning with a persisted cursor (`scheduler_state.json`) that backfills windows missed while the Docker host was suspended.
+- [`scheduler.py`](../../analyzer/src/scheduler.py) (`plan_analysis_windows`, `SchedulerState`, `ModeResolution`): Wall-clock window planning with a persisted cursor (`scheduler_state.json`) that backfills windows missed while the Docker host was suspended, plus automatic `onboarding` $\rightarrow$ `steady` lifecycle resolution (`resolve_active_mode`).
 - [`log_redaction.py`](../../analyzer/src/log_redaction.py) (`configure_logging`, `SecretRedactingFilter`, `mask_identifier`): Root logging setup that scrubs Telegram bot tokens and configured API keys from every log record and silences `httpx`/`httpcore` request logs.
-- [`main.py`](../../analyzer/src/main.py): Daemon loop (`run_scheduled_windows`, `run_analysis_window` → `CycleOutcome`) and CLI (`--once`, `--dry-run`, `--lookback-minutes`, `--reset-dedup`).
+- [`main.py`](../../analyzer/src/main.py): Daemon loop (`run_scheduled_windows`, `run_analysis_window` → `CycleOutcome`) and CLI (`--once`, `--dry-run`, `--lookback-minutes`, `--reset-dedup`, `--mode`).
 
 ---
 

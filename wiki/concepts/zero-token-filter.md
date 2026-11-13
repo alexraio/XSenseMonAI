@@ -1,15 +1,16 @@
 ---
 type: Architecture Concept
 title: Zero-Token Pre-Filter & Deduplication
-description: Local deterministic threshold evaluator, granular Known Flows store, and TTL anti-spam cache that prevent unnecessary LLM calls and alert fatigue.
+description: Local deterministic threshold evaluator, Onboarding vs. Steady-State lifecycle, granular Known Flows store, and TTL anti-spam cache that prevent unnecessary LLM calls and alert fatigue.
 resource: analyzer/src/filter_engine.py
 tags:
   - cost-control
   - zero-token
   - deduplication
   - known-flows
+  - onboarding
   - python
-timestamp: 2026-10-27T13:18:00Z
+timestamp: 2026-11-13T18:05:00Z
 ---
 
 # Zero-Token Pre-Filter & Deduplication
@@ -27,8 +28,11 @@ Every `ANALYSIS_INTERVAL_MINUTES` (default: `15`), the [Python AI Analyzer](../c
 3. **Tier 3 Check**: Sums `hit_count` and counts distinct `dst_port` values per external `src_ip`:
    - Flags **`is_high_volume = True`** if `total_blocked_hits` $\ge$ `WAN_BLOCK_HIT_THRESHOLD` (default: `50`).
    - Flags **`is_port_scanner = True`** if `distinct_ports_count` $\ge$ `WAN_PORT_SCAN_THRESHOLD` (default: `8`).
+   - **Mode-Aware Evaluation (`onboarding` vs. `steady`)**:
+     - During the initial **`onboarding`** phase (`MONITORING_MODE=auto`, default first `ONBOARDING_DURATION_HOURS=48` hours, or explicit `MONITORING_MODE=onboarding`), Tier 3 WAN scanners trigger AI analysis and Telegram reports on their own so the user can observe external perimeter activity and validate the pipeline.
+     - Once the analyzer transitions to **`steady`** (Steady-State) mode (either automatically after 48 hours with a one-time Telegram graduation notice, immediately via Zero-Wait Migration on pre-existing deployments, or via `MONITORING_MODE=steady`), **Tier 3 never triggers AI analysis or Telegram alerts on its own**. When `Tier 1 = 0` and `Tier 2 = 0`, `should_invoke_ai` is `False` (`0` tokens spent, `0` GeoIP calls, `0` Telegram messages). If a Tier 1 or Tier 2 anomaly triggers an alert in `steady` mode, `ZeroTokenFilterEngine` deterministically filters `tier3_offenders` to retain **only external IPs that correlate with Tier 1 (`dst_ip`) or Tier 2 (`src_ip`)**, passing uncorrelated WAN scanner counts solely as compact background statistics (`uncorrelated_wan_scanners_count`).
 
-If none of the three conditions are met after applying whitelists and deduplication, `should_invoke_ai` is `False` and **0 API tokens are spent**.
+If none of the active trigger conditions are met after applying whitelists and deduplication, `should_invoke_ai` is `False` and **0 API tokens are spent**.
 
 ---
 

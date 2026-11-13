@@ -20,6 +20,7 @@ from .geoip import enrich_evaluation_with_geoip
 from .known_flows import parse_compact_flow_rule
 from .log_redaction import configure_logging
 from .loki_client import LokiClient
+from .models import ActiveMonitoringMode
 from .notifier import TelegramNotifier
 from .scheduler import SchedulerState, plan_analysis_windows
 
@@ -58,11 +59,28 @@ def run_analysis_cycle(
     notifier: TelegramNotifier,
     lookback_minutes: int | None = None,
     dry_run: bool = False,
+    active_mode: ActiveMonitoringMode | None = None,
 ) -> bool:
     """Execute one complete log retrieval, Zero-Token filtering, AI analysis, and alerting cycle."""
     window_minutes = lookback_minutes or config.analysis_interval_minutes
     window_end = datetime.now(tz=UTC)
     window_start = window_end - timedelta(minutes=window_minutes)
+    if active_mode is None:
+        state = SchedulerState(config.scheduler_state_path)
+        mode_res = state.resolve_active_mode(
+            configured_mode=config.monitoring_mode,
+            duration_hours=config.onboarding_duration_hours,
+            now=window_end,
+            dedup_state_path=config.state_file_path,
+            persist=not dry_run,
+        )
+        if (
+            mode_res.should_notify_graduation
+            and not dry_run
+            and notifier.send_onboarding_graduation_notice(config.onboarding_duration_hours)
+        ):
+            state.mark_graduation_notified()
+        active_mode = mode_res.active_mode
     outcome = run_analysis_window(
         config=config,
         loki=loki,
@@ -72,6 +90,7 @@ def run_analysis_cycle(
         window_start=window_start,
         window_end=window_end,
         dry_run=dry_run,
+        active_mode=active_mode,
     )
     return outcome is CycleOutcome.COMPLETED
 
@@ -85,15 +104,17 @@ def run_analysis_window(
     window_start: datetime,
     window_end: datetime,
     dry_run: bool = False,
+    active_mode: ActiveMonitoringMode | None = None,
 ) -> CycleOutcome:
     """Analyze an explicit [window_start, window_end] time range."""
     window_minutes = round((window_end - window_start).total_seconds() / 60)
 
     logger.info(
-        "Starting analysis cycle for window %s -> %s UTC (%d min)",
+        "Starting analysis cycle for window %s -> %s UTC (%d min, mode=%s)",
         window_start.astimezone(UTC).strftime(WINDOW_TIME_FORMAT),
         window_end.astimezone(UTC).strftime(WINDOW_TIME_FORMAT),
         window_minutes,
+        active_mode or config.monitoring_mode,
     )
 
     try:
@@ -106,13 +127,17 @@ def run_analysis_window(
         events=events,
         window_start=window_start,
         window_end=window_end,
+        active_mode=active_mode,
+        record_dedup=not dry_run,
     )
 
     if not evaluation.should_invoke_ai:
         logger.info(
-            "Zero-Token Filter: No anomalies exceeded thresholds (raw_wan_blocks=%d, dedup_suppressed=%d, known_flows_suppressed=%d). "
+            "Zero-Token Filter (mode=%s): No anomalies exceeded thresholds (raw_wan_blocks=%d, uncorrelated_wan_scanners=%d, dedup_suppressed=%d, known_flows_suppressed=%d). "
             "Skipping LLM call (provider=%s, 0 tokens spent).",
+            evaluation.active_mode,
             evaluation.total_raw_wan_blocks,
+            evaluation.uncorrelated_wan_scanners_count,
             evaluation.suppressed_by_dedup_count,
             evaluation.suppressed_by_known_flows_count,
             config.llm_provider,
@@ -191,6 +216,19 @@ def run_scheduled_windows(
     for window_start, window_end in windows:
         if should_stop():
             break
+        mode_res = state.resolve_active_mode(
+            configured_mode=config.monitoring_mode,
+            duration_hours=config.onboarding_duration_hours,
+            now=window_end,
+            dedup_state_path=config.state_file_path,
+            persist=not dry_run,
+        )
+        if (
+            mode_res.should_notify_graduation
+            and not dry_run
+            and notifier.send_onboarding_graduation_notice(config.onboarding_duration_hours)
+        ):
+            state.mark_graduation_notified()
         outcome = run_analysis_window(
             config=config,
             loki=loki,
@@ -200,6 +238,7 @@ def run_scheduled_windows(
             window_start=window_start,
             window_end=window_end,
             dry_run=dry_run,
+            active_mode=mode_res.active_mode,
         )
         outcomes.append(outcome)
         if outcome is CycleOutcome.LOKI_UNAVAILABLE:
@@ -263,9 +302,17 @@ def main() -> int:
         action="store_true",
         help="List all active DHCP / Reverse-DNS device identities (IP <-> Hostname <-> MAC) and exit.",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["auto", "onboarding", "steady"],
+        default=None,
+        help="Override MONITORING_MODE ('auto', 'onboarding', or 'steady').",
+    )
     args = parser.parse_args()
 
     config = AppConfig.from_env()
+    if args.mode:
+        object.__setattr__(config, "monitoring_mode", args.mode)
     configure_logging(
         secrets=[config.telegram_bot_token, config.llm_api_key, config.anthropic_api_key]
     )
@@ -321,9 +368,11 @@ def main() -> int:
     interval_sec = config.analysis_interval_minutes * 60
     scheduler_state = SchedulerState(config.scheduler_state_path)
     logger.info(
-        "PfsenseMon Analyzer daemon started (interval=%dm, max_catchup=%dm, provider=%s, model=%s, api_base=%s, geoip=%s, loki=%s)",
+        "PfsenseMon Analyzer daemon started (interval=%dm, max_catchup=%dm, mode=%s, onboarding_hours=%dh, provider=%s, model=%s, api_base=%s, geoip=%s, loki=%s)",
         config.analysis_interval_minutes,
         config.max_catchup_minutes,
+        config.monitoring_mode,
+        config.onboarding_duration_hours,
         config.llm_provider,
         config.llm_model,
         config.llm_base_url,

@@ -261,9 +261,32 @@ class TelegramNotifier:
                 lines.append(
                     f"• {self._format_ip_html(t3.src_ip, evaluation)}: {t3.total_blocked_hits} blocked hits across {t3.distinct_ports_count} port(s)"
                 )
+        elif evaluation.active_mode == "steady" and evaluation.total_raw_wan_blocks > 0:
+            lines.append(
+                f"\n<i>🛡️ WAN Background: {evaluation.total_raw_wan_blocks} blocked packets "
+                f"({evaluation.uncorrelated_wan_scanners_count} uncorrelated scanner IPs suppressed in steady mode)</i>"
+            )
 
         lines.extend(self._format_known_flow_suggestions_html(evaluation))
 
+        return self._send_html_message("\n".join(lines))
+
+    def send_onboarding_graduation_notice(self, duration_hours: int) -> bool:
+        """Send a one-time Telegram notification when the onboarding window completes."""
+        if not self.is_configured:
+            logger.warning("Telegram credentials not configured; skipping graduation notice.")
+            return False
+
+        lines = [
+            "🎓 <b>[PfsenseMon - Onboarding Completato]</b>",
+            f"<i>La fase iniziale di osservazione ({duration_hours}h) è terminata. "
+            "Da questo momento PfsenseMon passa automaticamente in modalità <b>A Regime (Steady-State)</b>:</i>",
+            "",
+            "• 🔴 <b>Tier 1 (LAN / Outbound sospetto)</b> e 🟠 <b>Tier 2 (Auth / WAN Pass)</b> continueranno a inviare avvisi immediati.",
+            "• 🟡 <b>Tier 3 (Scan WAN bloccati)</b> non genererà più avvisi orari autonomi (restando salvato in Loki per Grafana/Hermes e come contesto di correlazione).",
+            "",
+            "<i>💡 Per riattivare in qualsiasi momento i report completi sugli scan WAN, imposta <code>MONITORING_MODE=onboarding</code> in <code>.env</code>.</i>",
+        ]
         return self._send_html_message("\n".join(lines))
 
     def _send_html_message(self, text: str) -> bool:

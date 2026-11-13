@@ -255,3 +255,193 @@ def test_configure_logging_silences_httpx_request_logs() -> None:
     configure_logging(secrets=[FAKE_BOT_TOKEN])
     assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
     assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
+
+
+# ==============================================================================
+# 4. Onboarding vs. Steady-State Lifecycle & Tier 3 Correlation
+# ==============================================================================
+def test_onboarding_to_steady_auto_graduation_and_telegram_notice(tmp_path: Path) -> None:
+    cfg = _config(tmp_path, monitoring_mode="auto", onboarding_duration_hours=48)
+    state = SchedulerState(cfg.scheduler_state_path)
+
+    # Fresh install at t=0 -> onboarding mode (48h remaining)
+    res_t0 = state.resolve_active_mode(
+        configured_mode=cfg.monitoring_mode,
+        duration_hours=cfg.onboarding_duration_hours,
+        now=NOW,
+        dedup_state_path=cfg.state_file_path,
+    )
+    assert res_t0.active_mode == "onboarding"
+    assert res_t0.should_notify_graduation is False
+    assert res_t0.remaining_hours == pytest.approx(48.0)
+
+    # At t=24h -> still onboarding (24h remaining)
+    res_t24 = state.resolve_active_mode(
+        configured_mode=cfg.monitoring_mode,
+        duration_hours=cfg.onboarding_duration_hours,
+        now=NOW + timedelta(hours=24),
+        dedup_state_path=cfg.state_file_path,
+    )
+    assert res_t24.active_mode == "onboarding"
+    assert res_t24.should_notify_graduation is False
+    assert res_t24.remaining_hours == pytest.approx(24.0)
+
+    # At t=48h -> graduates to steady mode and triggers one-time graduation notice
+    t48 = NOW + timedelta(hours=48)
+    loki = MagicMock(spec=LokiClient)
+    loki.fetch_pfsense_events.return_value = []
+    engine = ZeroTokenFilterEngine(cfg)
+    analyst = MagicMock(spec=AnthropicSOCAnalyst)
+    notifier = MagicMock(spec=TelegramNotifier)
+    notifier.send_onboarding_graduation_notice.return_value = True
+
+    state.save_last_window_end(t48 - HOUR)
+    run_scheduled_windows(cfg, loki, engine, analyst, notifier, state, now=t48)
+
+    notifier.send_onboarding_graduation_notice.assert_called_once_with(48)
+    assert state.is_graduation_notified() is True
+
+    # Subsequent cycle at t=49h -> stays in steady mode without re-sending graduation notice
+    notifier.reset_mock()
+    run_scheduled_windows(cfg, loki, engine, analyst, notifier, state, now=t48 + HOUR)
+    notifier.send_onboarding_graduation_notice.assert_not_called()
+
+
+def test_existing_deployment_zero_wait_migration_to_steady_mode(tmp_path: Path) -> None:
+    cfg = _config(tmp_path, monitoring_mode="auto", onboarding_duration_hours=48)
+    # Simulate pre-existing dedup_cache.json from an active deployment
+    cfg.state_file_path.write_text('{"tier3:198.51.100.42:scan": 1700000000.0}', encoding="utf-8")
+    state = SchedulerState(cfg.scheduler_state_path)
+
+    res = state.resolve_active_mode(
+        configured_mode=cfg.monitoring_mode,
+        duration_hours=cfg.onboarding_duration_hours,
+        now=NOW,
+        dedup_state_path=cfg.state_file_path,
+    )
+    assert res.active_mode == "steady"
+    assert res.should_notify_graduation is False
+    assert state.is_graduation_notified() is True
+
+
+def test_steady_mode_suppresses_standalone_tier3_wan_scans_zero_token(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+    engine = ZeroTokenFilterEngine(cfg)
+
+    wan_scan_events = [
+        NormalizedLogEvent(
+            timestamp=NOW,
+            security_tier="tier_3_wan_blocked",
+            sub_type="wan_inbound_block",
+            src_ip="198.51.100.42",
+            dst_port=str(1000 + p),
+            proto="tcp",
+            action="block",
+            hit_count=10,
+        )
+        for p in range(10)
+    ]
+
+    # In steady mode: 100 hits across 10 ports from WAN scanner does NOT trigger AI
+    eval_steady = engine.evaluate(
+        events=wan_scan_events,
+        window_start=NOW - HOUR,
+        window_end=NOW,
+        active_mode="steady",
+    )
+    assert eval_steady.active_mode == "steady"
+    assert eval_steady.should_invoke_ai is False
+    assert eval_steady.tier3_offenders == []
+    assert eval_steady.uncorrelated_wan_scanners_count == 1
+    assert eval_steady.total_raw_wan_blocks == 100
+
+    # Because steady mode did not alert on 198.51.100.42, switching to onboarding mode still sees it
+    eval_onboarding = engine.evaluate(
+        events=wan_scan_events,
+        window_start=NOW - HOUR,
+        window_end=NOW,
+        active_mode="onboarding",
+    )
+    assert eval_onboarding.active_mode == "onboarding"
+    assert eval_onboarding.should_invoke_ai is True
+    assert len(eval_onboarding.tier3_offenders) == 1
+    assert eval_onboarding.tier3_offenders[0].src_ip == "198.51.100.42"
+
+
+def test_steady_mode_correlates_matching_tier3_ip_when_tier1_or_tier2_triggers(
+    tmp_path: Path,
+) -> None:
+    cfg = _config(tmp_path, monitoring_mode="steady")
+    engine = ZeroTokenFilterEngine(cfg)
+
+    events = [
+        # Correlated WAN scanner 198.51.100.77 (60 hits)
+        NormalizedLogEvent(
+            timestamp=NOW,
+            security_tier="tier_3_wan_blocked",
+            sub_type="wan_inbound_block",
+            src_ip="198.51.100.77",
+            dst_port="4444",
+            proto="tcp",
+            action="block",
+            hit_count=60,
+        ),
+        # Uncorrelated random WAN scanner 203.0.113.88 (90 hits)
+        NormalizedLogEvent(
+            timestamp=NOW,
+            security_tier="tier_3_wan_blocked",
+            sub_type="wan_inbound_block",
+            src_ip="203.0.113.88",
+            dst_port="23",
+            proto="tcp",
+            action="block",
+            hit_count=90,
+        ),
+        # Internal LAN host 192.168.1.50 attempting outbound connection to 198.51.100.77
+        NormalizedLogEvent(
+            timestamp=NOW,
+            security_tier="tier_1_outbound_suspicious",
+            sub_type="outbound_blocked",
+            src_ip="192.168.1.50",
+            dst_ip="198.51.100.77",
+            dst_port="4444",
+            proto="tcp",
+            action="block",
+            hit_count=4,
+        ),
+    ]
+
+    result = engine.evaluate(
+        events=events,
+        window_start=NOW - HOUR,
+        window_end=NOW,
+        active_mode="steady",
+    )
+    assert result.should_invoke_ai is True
+    assert len(result.tier1_anomalies) == 1
+    # Only the correlated WAN scanner (198.51.100.77) is retained in tier3_offenders
+    assert [t3.src_ip for t3 in result.tier3_offenders] == ["198.51.100.77"]
+    assert result.uncorrelated_wan_scanners_count == 1
+    assert any("Correlated 1 active external WAN scanner" in r for r in result.trigger_reasons)
+
+
+def test_send_onboarding_graduation_notice_html_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    cfg = _config(tmp_path)
+    notifier = TelegramNotifier(cfg)
+    posted_payloads: list[dict[str, object]] = []
+
+    def fake_post(self: httpx.Client, url: str, **kwargs: object) -> httpx.Response:
+        posted_payloads.append(kwargs.get("json", {}))  # type: ignore[arg-type]
+        return httpx.Response(200, json={"ok": True}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.Client, "post", fake_post)
+    assert notifier.send_onboarding_graduation_notice(48) is True
+    assert len(posted_payloads) == 1
+    text = str(posted_payloads[0].get("text", ""))
+    assert "Onboarding Completato" in text
+    assert "48h" in text
+    assert "Steady-State" in text

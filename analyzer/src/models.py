@@ -15,6 +15,7 @@ SecurityTier = Literal[
 ]
 
 SeverityLevel = Literal["INFO", "WARNING", "CRITICAL"]
+ActiveMonitoringMode = Literal["onboarding", "steady"]
 
 
 class NormalizedLogEvent(BaseModel):
@@ -119,12 +120,14 @@ class FilterEvaluationResult(BaseModel):
 
     window_start: datetime
     window_end: datetime
+    active_mode: ActiveMonitoringMode = "onboarding"
     should_invoke_ai: bool = False
     trigger_reasons: list[str] = Field(default_factory=list)
     tier1_anomalies: list[OutboundAnomalySummary] = Field(default_factory=list)
     tier2_events: list[AuthOrAccessSummary] = Field(default_factory=list)
     tier3_offenders: list[WanOffenderSummary] = Field(default_factory=list)
     total_raw_wan_blocks: int = 0
+    uncorrelated_wan_scanners_count: int = 0
     suppressed_by_dedup_count: int = 0
     suppressed_by_known_flows_count: int = 0
     known_flows_context: list[dict[str, Any]] = Field(default_factory=list)
