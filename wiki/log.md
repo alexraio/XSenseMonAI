@@ -318,6 +318,22 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
      - Added `--list-leases` CLI flag in [`analyzer/src/main.py`](../analyzer/src/main.py) and enriched [`analyzer/src/notifier.py`](../analyzer/src/notifier.py), [`analyzer/src/ai_analyst.py`](../analyzer/src/ai_analyst.py), and [`hermes_skill/query_pfsense_loki.py`](../hermes_skill/query_pfsense_loki.py) with resolved device identities.
   4. **Verification**: Added 3 comprehensive unit and integration tests in [`tests/test_known_flows.py`](../tests/test_known_flows.py) covering DHCP IP rotation persistence, anti-inheritance on IP reuse, `Hostname -> MAC -> IP` Telegram suggestion hierarchy, and Cold Start `PTR` resolution.
 
+---
+
+## [2026-11-13] feat | Implemented Two-Phase Monitoring Lifecycle: Onboarding vs. Steady-State Mode (`feature/onboarding-steady-mode`)
+
+- Completed structured `brainstorming` workflow (Understanding Lock, NFRs, 3 architectural options, incremental design validation, and Decision Log) documented in Section 10 of [`DESIGN.md`](../DESIGN.md) to eliminate post-onboarding hourly WAN-scan alert fatigue while preserving full Tier 1/2 vigilance and Grafana/Hermes telemetry:
+  1. **Lifecycle Configuration & `SchedulerState` Persistence (`analyzer/src/config.py`, `analyzer/src/scheduler.py`)**:
+     - Added `MONITORING_MODE` (`auto` | `onboarding` | `steady`, default `auto`), `ONBOARDING_DURATION_HOURS` (default `48` hours), and `--mode` CLI override in [`analyzer/src/main.py`](../analyzer/src/main.py).
+     - Extended `SchedulerState` (`scheduler_state.json`) with `onboarding_started_at` and `graduation_notified`.
+     - Implemented **Zero-Wait Migration**: when upgrading an existing active deployment where `last_window_end` or `dedup_cache.json` already exists on disk, `resolve_active_mode()` immediately migrates to `steady` mode without waiting an additional 48 hours.
+     - For new installations in `auto` mode, completing the 48-hour onboarding window triggers a one-time Telegram graduation notice (`TelegramNotifier.send_onboarding_graduation_notice`) and transitions to `steady` mode.
+  2. **Deterministic Tier 3 Suppression & Cross-Tier Correlation (`analyzer/src/filter_engine.py`, `analyzer/src/ai_analyst.py`)**:
+     - In `steady` mode, blocked inbound WAN scans (`tier_3_wan_blocked`) never trigger AI analysis or Telegram alerts on their own (`0` LLM tokens, `0` GeoIP lookups, and `0` Telegram messages when `Tier 1 = 0` and `Tier 2 = 0`).
+     - When a Tier 1 or Tier 2 anomaly triggers in `steady` mode, `ZeroTokenFilterEngine` deterministically filters `tier3_offenders` to retain **only external IPs that correlate with Tier 1 (`dst_ip`) or Tier 2 (`src_ip`)**, while reporting uncorrelated WAN scanner counts as compact background metadata (`uncorrelated_wan_scanners_count`).
+  3. **Verification**: Added 5 unit and integration tests in [`tests/test_scheduler_and_redaction.py`](../tests/test_scheduler_and_redaction.py) (58 total tests passing, `ruff` clean).
+
+
 
 
 

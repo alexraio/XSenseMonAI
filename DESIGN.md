@@ -313,4 +313,37 @@ flowchart LR
 | **D16** | **Unified `Vector -> Loki (tier_0_dhcp_identity) -> DeviceIdentityStore` Pipeline** | Stateless Analyzer querying 7 days of Loki on every cycle; direct Vector-to-Analyzer shared file bypassing Loki. | Persists long-lived leases locally (`/app/state/dhcp_leases.json`) while giving Grafana and the isolated **Hermes Agent** (`TCP 3100`) full visibility into historical DHCP lease timelines. |
 | **D17** | **Multi-Daemon VRL Parsing (`dhcpd`, `kea-dhcp4`, `dnsmasq-dhcp`)** | ISC `dhcpd` only. | pfSense 2.7.2+ and pfSense Plus default to Kea DHCP (`kea-dhcp4`), while OpenWrt/UniFi routers use `dnsmasq`. |
 
+---
+
+## 10. Two-Phase Monitoring Lifecycle: Onboarding vs. Steady-State Mode (`feature/onboarding-steady-mode`)
+
+### 10.1 Understanding Summary (Validated)
+- **What is being built**: A two-phase operational lifecycle for the AI Analyzer (`onboarding` vs. `steady` mode), governed by `MONITORING_MODE=auto|onboarding|steady` and `ONBOARDING_DURATION_HOURS=48` (plus CLI override `--mode`).
+- **Why it exists**: During the first 48 hours of deployment (`onboarding`), receiving hourly reports that include blocked inbound WAN scans (Tier 3) reassures the user that the pipeline is active and provides visibility into external background radiation. Once the network baseline is established (`steady` mode), triggering AI calls and Telegram notifications every hour solely because of blocked WAN port scans causes alert fatigue and unnecessary LLM token consumption.
+- **Steady-State (`steady`) Behavior**:
+  - **Tier 3 Standalone Suppression**: Blocked inbound WAN scans (`tier_3_wan_blocked`) never trigger AI analysis or Telegram notifications on their own. When `Tier 1 = 0` and `Tier 2 = 0`, the cycle completes at **0 LLM tokens, 0 GeoIP queries, and 0 Telegram messages**.
+  - **Tier 1/2 Focus & Deterministic Cross-Tier Correlation**: When a Tier 1 (suspicious outbound/lateral) or Tier 2 (auth/allowed WAN) anomaly occurs in `steady` mode, `ZeroTokenFilterEngine` deterministically filters `tier3_offenders` to retain **only external IPs that also appear in Tier 1 (`dst_ip`) or Tier 2 (`src_ip`)**, while passing the aggregate WAN block counts (`total_raw_wan_blocks` and `uncorrelated_wan_scanners_count`) as compact background statistics.
+- **Automatic Graduation & Zero-Wait Migration**:
+  - In `MONITORING_MODE=auto`, new installations start in `onboarding` mode (`onboarding_started_at` persisted in `/app/state/scheduler_state.json`) and automatically transition to `steady` mode after `ONBOARDING_DURATION_HOURS` (48h), delivering a one-time Telegram graduation notice (`graduation_notified = true`).
+  - Existing active deployments (where `last_window_end` in `scheduler_state.json` or a populated `dedup_cache.json` already exists on disk prior to upgrading) automatically migrate to `steady` mode without waiting an extra 48 hours.
+- **Explicit Non-Goals (YAGNI)**:
+  - No dropping or truncation of Tier 3 telemetry in Vector or Grafana Loki (100% of historical WAN scan data remains queryable in Grafana dashboards and via the Hermes Agent skill).
+  - No forced daily digest or heartbeat messages when Tier 1 and Tier 2 are quiet.
+  - No changes to `ALERT_DEDUP_TTL_MINUTES` (remains `120` minutes by default) or Tier 1/2 detection thresholds.
+
+### 10.2 Non-Functional Requirements (NFRs) & Assumptions
+1. **Token & GeoIP Efficiency**: In `steady` mode, non-correlated WAN scanner IPs are stripped prior to `enrich_evaluation_with_geoip()` and LLM prompt serialization, saving ~500–800 input tokens and external GeoIP batch queries per Tier 1/2 alert while preventing LLM attention dilution.
+2. **State Persistence**: Onboarding lifecycle metadata (`onboarding_started_at` and `graduation_notified`) is stored atomically inside the existing `/app/state/scheduler_state.json` alongside `last_window_end` (preserving backward compatibility and surviving container or host restarts).
+3. **Dry-Run Isolation**: Running with `--dry-run` never mutates `onboarding_started_at` or `graduation_notified` on disk.
+
+### 10.3 Architectural Decision Log (Phase 10)
+
+| # | Decision | Alternatives Considered | Why Chosen |
+|---|---|---|---|
+| **D18** | **Tier 3 Role in `steady` Mode**: Never triggers alerts alone; attached only as correlated context when Tier 1 or Tier 2 triggers | Drop Tier 3 in Vector; send a 24h Daily Digest for Tier 3 | Eliminates hourly WAN-noise alert fatigue and token waste while keeping Grafana/Hermes telemetry intact and preserving cross-tier attack correlation. |
+| **D19** | **Time-Based `auto` Graduation (48h) + Telegram Notice + `.env`/CLI Override** | Manual `.env` toggle only; message-count graduation | Gives new users a 48h guided discovery period followed by hands-off noise reduction, while supporting explicit manual control (`MONITORING_MODE=steady\|onboarding`). |
+| **D20** | **Deterministic Python Correlation Filter in `ZeroTokenFilterEngine` (Option 1)** | Prompt-only instruction while still passing all 25 Tier 3 offenders (Option 2) | Guarantees 100% deterministically that local/cloud LLMs cannot pollute `suspicious_ips` or `key_findings` with uncorrelated WAN scanners, and avoids wasted GeoIP/token overhead. |
+| **D21** | **Unified `SchedulerState` Persistence + Zero-Wait Migration for Existing Installs** | Separate state file; resetting the 48h clock on existing deployments | Prevents state file sprawl in `/app/state/` and immediately transitions already-onboarded deployments into `steady` mode. |
+
+
 

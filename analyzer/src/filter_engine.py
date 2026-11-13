@@ -13,6 +13,7 @@ from .config import AppConfig
 from .device_identity import DeviceIdentityStore, normalize_hostname, normalize_mac
 from .known_flows import KnownFlowsStore
 from .models import (
+    ActiveMonitoringMode,
     AuthOrAccessSummary,
     FilterEvaluationResult,
     NormalizedLogEvent,
@@ -125,8 +126,15 @@ class ZeroTokenFilterEngine:
         events: list[NormalizedLogEvent],
         window_start: datetime,
         window_end: datetime,
+        active_mode: ActiveMonitoringMode | None = None,
+        record_dedup: bool = True,
     ) -> FilterEvaluationResult:
         """Aggregate events into the 3 security tiers and check detection thresholds."""
+        effective_mode: ActiveMonitoringMode = (
+            active_mode
+            if active_mode is not None
+            else ("steady" if self.config.monitoring_mode == "steady" else "onboarding")
+        )
         self.known_flows.reload_if_changed()
         self.identity_store.enrich_events(events)
 
@@ -300,8 +308,20 @@ class ZeroTokenFilterEngine:
                 )
             )
 
+        # Cap Tier 1 and Tier 2 items to protect the LLM context window
+        cap = self.config.max_prompt_items_per_tier
+        tier1_list = tier1_list[:cap]
+        tier2_list = tier2_list[:cap]
+
+        correlated_ips = (
+            {t1.dst_ip for t1 in tier1_list}
+            | {t1.src_ip for t1 in tier1_list}
+            | {t2.src_ip for t2 in tier2_list}
+        )
+
         # Build Tier 3 summaries (only offenders exceeding hit threshold or port-scan threshold)
         tier3_list: list[WanOffenderSummary] = []
+        uncorrelated_wan_scanners_count = 0
         for src_ip, total_hits in sorted(
             tier3_hits_by_ip.items(), key=lambda x: x[1], reverse=True
         ):
@@ -311,6 +331,10 @@ class ZeroTokenFilterEngine:
             is_scanner = distinct_ports >= self.config.wan_port_scan_threshold
 
             if not (is_high_vol or is_scanner):
+                continue
+
+            if effective_mode == "steady" and src_ip not in correlated_ips:
+                uncorrelated_wan_scanners_count += 1
                 continue
 
             dedup_key = f"tier3:{src_ip}:{'scan' if is_scanner else 'flood'}"
@@ -331,10 +355,6 @@ class ZeroTokenFilterEngine:
                 )
             )
 
-        # Cap items per tier to protect the Anthropic context window
-        cap = self.config.max_prompt_items_per_tier
-        tier1_list = tier1_list[:cap]
-        tier2_list = tier2_list[:cap]
         tier3_list = tier3_list[:cap]
 
         trigger_reasons: list[str] = []
@@ -346,13 +366,17 @@ class ZeroTokenFilterEngine:
             trigger_reasons.append(
                 f"Detected {len(tier2_list)} authentication or allowed WAN access event group(s) (Tier 2)"
             )
-        if tier3_list:
+        if effective_mode == "onboarding" and tier3_list:
             trigger_reasons.append(
                 f"Detected {len(tier3_list)} aggressive external WAN offender(s) exceeding thresholds (Tier 3)"
             )
+        elif effective_mode == "steady" and trigger_reasons and tier3_list:
+            trigger_reasons.append(
+                f"Correlated {len(tier3_list)} active external WAN scanner IP(s) with Tier 1/2 event(s)"
+            )
 
         should_invoke = len(trigger_reasons) > 0
-        if should_invoke and new_dedup_keys:
+        if should_invoke and new_dedup_keys and record_dedup:
             self.dedup.mark_alerted(new_dedup_keys)
 
         known_context = (
@@ -368,12 +392,14 @@ class ZeroTokenFilterEngine:
         return FilterEvaluationResult(
             window_start=window_start,
             window_end=window_end,
+            active_mode=effective_mode,
             should_invoke_ai=should_invoke,
             trigger_reasons=trigger_reasons,
             tier1_anomalies=tier1_list,
             tier2_events=tier2_list,
             tier3_offenders=tier3_list,
             total_raw_wan_blocks=total_raw_wan_blocks,
+            uncorrelated_wan_scanners_count=uncorrelated_wan_scanners_count,
             suppressed_by_dedup_count=suppressed_count,
             suppressed_by_known_flows_count=suppressed_by_known_flows,
             known_flows_context=known_context,

@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 SUPPORTED_LLM_PROVIDERS = {"anthropic", "ollama", "openai", "openrouter"}
+SUPPORTED_MONITORING_MODES = {"auto", "onboarding", "steady"}
 
 
 def _parse_csv_set(value: str | None) -> set[str]:
@@ -122,6 +123,9 @@ class AppConfig:
     analysis_interval_minutes: int = 15
     # Maximum look-back used to backfill windows missed while the host was suspended/offline
     max_catchup_minutes: int = 1440
+    # Monitoring lifecycle mode ('auto' | 'onboarding' | 'steady')
+    monitoring_mode: str = "auto"
+    onboarding_duration_hours: int = 48
     wan_block_hit_threshold: int = 50
     wan_port_scan_threshold: int = 8
     outbound_suspicious_threshold: int = 1
@@ -169,6 +173,15 @@ class AppConfig:
                 f"Unsupported LLM_PROVIDER '{provider}'. Must be one of: {sorted(SUPPORTED_LLM_PROVIDERS)}"
             )
         object.__setattr__(self, "llm_provider", provider)
+
+        raw_mode = (self.monitoring_mode or "auto").strip().lower()
+        if raw_mode in {"standard", "quiet", "production"}:
+            raw_mode = "steady"
+        if raw_mode not in SUPPORTED_MONITORING_MODES:
+            raise ValueError(
+                f"Unsupported MONITORING_MODE '{raw_mode}'. Must be one of: {sorted(SUPPORTED_MONITORING_MODES)}"
+            )
+        object.__setattr__(self, "monitoring_mode", raw_mode)
 
         if provider == "anthropic":
             effective_key = (self.anthropic_api_key or self.llm_api_key).strip()
@@ -284,6 +297,10 @@ class AppConfig:
             ).rstrip("/"),
             analysis_interval_minutes=max(1, int(os.getenv("ANALYSIS_INTERVAL_MINUTES", "15"))),
             max_catchup_minutes=max(0, int(os.getenv("MAX_CATCHUP_MINUTES", "1440"))),
+            monitoring_mode=os.getenv("MONITORING_MODE", "auto").strip().lower() or "auto",
+            onboarding_duration_hours=max(
+                0, int(os.getenv("ONBOARDING_DURATION_HOURS", "48"))
+            ),
             wan_block_hit_threshold=max(1, int(os.getenv("WAN_BLOCK_HIT_THRESHOLD", "50"))),
             wan_port_scan_threshold=max(1, int(os.getenv("WAN_PORT_SCAN_THRESHOLD", "8"))),
             outbound_suspicious_threshold=max(
