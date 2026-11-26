@@ -130,8 +130,27 @@ transforms:
         wl_str = if env_err == null { env_wl } else { "53,80,123,443,465,587,853,993,51820,1194" }
         whitelist_ports = split(wl_str, ",")
 
+        env_wan, wan_err = get_env_var("PFSENSE_WAN_INTERFACES")
+        wan_raw = if wan_err == null { env_wan } else { "" }
+        wan_clean = downcase(replace(strip_whitespace(wan_raw), " ", ""))
+        wan_str = if wan_clean != "" { wan_clean } else { "wan,igb0,em0,vtnet0,pppoe0,ix0,re0,igc0" }
+        wan_ifaces = split(wan_str, ",")
+        is_wan_iface = iface != "" && includes(wan_ifaces, iface)
+
         # 3-Tier Security Classification
-        if src_is_private && !dst_is_private {
+        if is_wan_iface && direction == "in" {
+          # Inbound traffic arriving on a configured WAN interface (covers both public WAN IPs
+          # and Double-NAT DMZ/Exposed Host WANs receiving spoofed/bogon RFC1918 source IPs)
+          if action == "pass" {
+            security_tier = "tier_2_access_and_auth"
+            sub_type = "wan_inbound_pass"
+          } else if action == "block" {
+            security_tier = "tier_3_wan_blocked"
+            sub_type = "wan_inbound_block"
+          } else {
+            abort
+          }
+        } else if src_is_private && !dst_is_private {
           # Traffic originating from internal LAN/VLAN heading to the public WAN
           if action == "block" {
             security_tier = "tier_1_outbound_suspicious"
@@ -144,7 +163,7 @@ transforms:
             abort
           }
         } else if !src_is_private {
-          # Traffic originating from external public IP on the WAN
+          # Fallback for traffic originating from external public IP on an unlisted WAN interface
           if action == "pass" && direction == "in" {
             security_tier = "tier_2_access_and_auth"
             sub_type = "wan_inbound_pass"
@@ -155,7 +174,7 @@ transforms:
             abort
           }
         } else if src_is_private && dst_is_private && action == "block" {
-          # Internal lateral movement blocked between VLANs (excluding noisy discovery ports)
+          # Internal lateral movement blocked between LAN/VLANs (excluding noisy discovery ports)
           noisy_local_ports = ["137", "138", "1900", "5353"]
           if !includes(noisy_local_ports, dst_port) {
             security_tier = "tier_1_outbound_suspicious"

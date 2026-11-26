@@ -33,13 +33,13 @@ To solve this, **PfsenseMon** classifies every incoming syslog event inside the 
 ### 🟠 Tier 2: Authentication & Allowed WAN Access (`tier_2_access_and_auth`)
 - **What it captures**:
   1. **`pfsense_auth_daemon`**: Control-plane and authentication logs from `sshd`, `webConfigurator` (`php-fpm`), `openvpn`, `wireguard`, and `charon` (IPsec).
-  2. **`wan_inbound_pass`**: Any inbound packet from a public IP on the WAN with `action="pass"`.
+  2. **`wan_inbound_pass`**: Any inbound packet (`direction="in"`) arriving on a configured WAN interface (`PFSENSE_WAN_INTERFACES`) or from a public IP on the WAN with `action="pass"`.
 - **Retention Granularity**: **1:1 (No aggregation loss)**.
 - **Security Rationale**: Tracks brute-force attempts against administrative interfaces and monitors traffic entering exposed port-forwards or VPN endpoints.
 
 ### 🟡 Tier 3: Blocked Inbound WAN Traffic (`tier_3_wan_blocked`)
 - **What it captures**:
-  - **`wan_inbound_block`**: Inbound packets from external public IPs blocked by pfSense (`action="block"`).
+  - **`wan_inbound_block`**: Inbound packets (`direction="in"`) arriving on a configured WAN interface (`PFSENSE_WAN_INTERFACES`) or from external public IPs blocked by pfSense (`action="block"`). Evaluating `PFSENSE_WAN_INTERFACES` before RFC1918 heuristics ensures Double-NAT/DMZ setups (e.g. behind an upstream ISP router where the pfSense WAN IP is itself RFC1918) do not misclassify inbound spoofed RFC1918 bogons as `internal_lateral_blocked`.
 - **Retention Granularity**: **Aggregated in 60-second windows** by `(src_ip, dst_port, proto, interface)` with a summed `hit_count` counter.
 - **Security Rationale**: Compresses repetitive port scans and botnet noise by ~90% while preserving exact packet counts (`hit_count`) and targeted port diversity for the [Zero-Token Pre-Filter](zero-token-filter.md) and Grafana charts.
 

@@ -37,7 +37,7 @@ services:
     ports:
       - "${VECTOR_SYSLOG_PORT:-5140}:5140/udp"
     environment:
-      - PFSENSE_WAN_INTERFACES=${PFSENSE_WAN_INTERFACES:-wan,igb0,em0,vtnet0,pppoe0,ix0,re0}
+      - PFSENSE_WAN_INTERFACES=${PFSENSE_WAN_INTERFACES:-wan,igb0,em0,vtnet0,pppoe0,ix0,re0,igc0}
       - WHITELIST_OUTBOUND_PORTS=${WHITELIST_OUTBOUND_PORTS:-53,80,123,443,465,587,853,993,51820,1194}
     volumes:
       - ./config/vector/vector.yaml:/etc/vector/vector.yaml:ro
