@@ -298,8 +298,15 @@ def test_regression_vector_yaml_has_no_fallible_vrl_antipatterns() -> None:
     assert "src_v4, _ = is_ipv4(" not in vector_yaml
     assert "dst_v4, _ = is_ipv4(" not in vector_yaml
     assert 'if proto == "tcp" && action == "block" && !contains(tcp_flags, "S")' in vector_yaml
+    assert 'get_env_var("PFSENSE_WAN_INTERFACES")' in vector_yaml
+    assert 'if is_wan_iface && direction == "in"' in vector_yaml
+    assert "to_string(env_wan)" not in vector_yaml
+
+    env_example = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "igc0" in env_example
 
     compose_yaml = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "igc0" in compose_yaml
     assert compose_yaml.count('max-size: "10m"') == 3
     assert compose_yaml.count('max-file: "3"') == 3
 
@@ -824,5 +831,105 @@ def test_regression_anthropic_precedence_over_lingering_local_llm_vars(tmp_path:
     assert cfg.llm_api_key == "sk-ant-real-minimax-or-anthropic-key"
     assert cfg.llm_base_url == "https://api.minimax.io/anthropic"
     assert cfg.llm_model == "MiniMax-M3"
+
+
+# ==============================================================================
+# 10. Regression: Double-NAT / DMZ WAN RFC1918 Bogon Classification
+# ==============================================================================
+def test_regression_double_nat_wan_rfc1918_bogon_reclassified_to_tier3(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """Inbound packets on configured WAN interfaces must never be treated as internal lateral movement."""
+    monkeypatch.setenv("PFSENSE_WAN_INTERFACES", "WAN, igc0 , igc0.7")
+    custom_cfg = AppConfig.from_env(tmp_path / "nonexistent.env")
+    assert custom_cfg.pfsense_wan_interfaces == {"wan", "igc0", "igc0.7"}
+
+    monkeypatch.setenv("PFSENSE_WAN_INTERFACES", "")
+    default_cfg = AppConfig.from_env(tmp_path / "nonexistent.env")
+    assert "igc0" in default_cfg.pfsense_wan_interfaces
+    assert "igb0" in default_cfg.pfsense_wan_interfaces
+
+    cfg = _base_config(tmp_path)
+    engine = ZeroTokenFilterEngine(cfg)
+    now = datetime.now(tz=UTC)
+
+    # Case A: Spoofed RFC1918 TCP SYN arriving IN on WAN (igc0) behind an upstream DMZ router
+    bogon_wan_event = NormalizedLogEvent(
+        timestamp=now,
+        security_tier="tier_1_outbound_suspicious",
+        sub_type="internal_lateral_blocked",
+        src_ip="10.0.0.9",
+        dst_ip="192.168.1.2",
+        src_port="56380",
+        dst_port="389",
+        proto="tcp",
+        action="block",
+        direction="in",
+        interface="igc0",
+        tcp_flags="S",
+        hit_count=1,
+    )
+    res_bogon = engine.evaluate([bogon_wan_event], now, now)
+    assert res_bogon.should_invoke_ai is False
+    assert res_bogon.tier1_anomalies == []
+    assert res_bogon.total_raw_wan_blocks == 1
+
+    # Case B: Allowed inbound packet on WAN (igc0) with RFC1918 source/dest -> Tier 2 wan_inbound_pass
+    pass_wan_event = NormalizedLogEvent(
+        timestamp=now,
+        security_tier="tier_1_outbound_suspicious",
+        sub_type="internal_lateral_blocked",
+        src_ip="10.0.0.10",
+        dst_ip="192.168.1.2",
+        dst_port="443",
+        proto="tcp",
+        action="pass",
+        direction="in",
+        interface="igc0",
+        hit_count=1,
+    )
+    res_pass = engine.evaluate([pass_wan_event], now, now)
+    assert res_pass.should_invoke_ai is True
+    assert res_pass.tier1_anomalies == []
+    assert len(res_pass.tier2_events) == 1
+    assert res_pass.tier2_events[0].sub_type == "wan_inbound_pass"
+
+    # Case C: Genuine internal lateral block on LAN/VLAN (igc1.30) and outbound block on WAN (direction=out)
+    # must remain Tier 1 anomalies.
+    genuine_tier1 = [
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_1_outbound_suspicious",
+            sub_type="internal_lateral_blocked",
+            src_ip="172.16.0.10",
+            dst_ip="192.168.1.50",
+            dst_port="445",
+            proto="tcp",
+            action="block",
+            direction="in",
+            interface="igc1.30",
+            tcp_flags="S",
+            hit_count=2,
+        ),
+        NormalizedLogEvent(
+            timestamp=now,
+            security_tier="tier_1_outbound_suspicious",
+            sub_type="outbound_blocked",
+            src_ip="192.168.1.50",
+            dst_ip="198.51.100.77",
+            dst_port="4444",
+            proto="tcp",
+            action="block",
+            direction="out",
+            interface="igc0",
+            tcp_flags="S",
+            hit_count=3,
+        ),
+    ]
+    res_real = engine.evaluate(genuine_tier1, now, now)
+    assert res_real.should_invoke_ai is True
+    assert len(res_real.tier1_anomalies) == 2
+
 
 

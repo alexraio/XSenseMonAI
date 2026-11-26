@@ -333,6 +333,17 @@ This file is the append-only chronological log (`log.md`) defined by the [LLM Wi
      - When a Tier 1 or Tier 2 anomaly triggers in `steady` mode, `ZeroTokenFilterEngine` deterministically filters `tier3_offenders` to retain **only external IPs that correlate with Tier 1 (`dst_ip`) or Tier 2 (`src_ip`)**, while reporting uncorrelated WAN scanner counts as compact background metadata (`uncorrelated_wan_scanners_count`).
   3. **Verification**: Added 5 unit and integration tests in [`tests/test_scheduler_and_redaction.py`](../tests/test_scheduler_and_redaction.py) (58 total tests passing, `ruff` clean).
 
+---
+
+## [2026-11-26] fix | Wired `PFSENSE_WAN_INTERFACES` into Vector VRL & Analyzer for Double-NAT / DMZ Classification (`fix/wan-double-nat-classification`)
+
+- Diagnosed live production false-positive Tier 1 (`internal_lateral_blocked`) alerts on a pfSense deployment running behind an upstream router in DMZ/Exposed Host mode (where the pfSense WAN interface `igc0` holds an RFC1918 IP such as `192.168.1.2`):
+  - Inbound TCP `SYN` bogon/spoofed packets with RFC1918 source addresses (e.g., `10.0.0.9 -> 192.168.1.2:389` on `igc0`) were blocked by pfSense (`rule 1000000103`), but Vector VRL previously relied solely on `src_is_private && dst_is_private` without checking `PFSENSE_WAN_INTERFACES`.
+- Updated [`config/vector/vector.yaml`](../config/vector/vector.yaml):
+  - Wired `get_env_var("PFSENSE_WAN_INTERFACES")` (defaulting to `wan,igb0,em0,vtnet0,pppoe0,ix0,re0,igc0`) and prioritized `is_wan_iface && direction == "in"` before RFC1918 lateral checks so inbound WAN traffic is classified as `tier_3_wan_blocked` (`block`) or `tier_2_access_and_auth` (`pass`).
+- Added defense-in-depth in [`analyzer/src/config.py`](../analyzer/src/config.py) (`pfsense_wan_interfaces`) and [`analyzer/src/filter_engine.py`](../analyzer/src/filter_engine.py) so legacy/buffered Tier 1 events arriving `in` on a configured WAN interface are safely reclassified to Tier 3 / Tier 2.
+- Added `igc0` to default `PFSENSE_WAN_INTERFACES` in [`.env.example`](../.env.example) and [`docker-compose.yml`](../docker-compose.yml) (aligning with [`setup.sh`](../setup.sh)), updated [`README.md`](../README.md), [`wiki/components/vector-pipeline.md`](components/vector-pipeline.md), and [`wiki/concepts/three-tier-hybrid-strategy.md`](concepts/three-tier-hybrid-strategy.md), and added regression test coverage in [`tests/test_regressions.py`](../tests/test_regressions.py).
+
 
 
 

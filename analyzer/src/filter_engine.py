@@ -169,10 +169,27 @@ class ZeroTokenFilterEngine:
             ):
                 continue
 
+            # Defense-in-depth: inbound traffic arriving on a configured WAN interface is never
+            # internal lateral movement (prevents Double-NAT / DMZ RFC1918 bogon false positives).
+            effective_tier = ev.security_tier
+            effective_sub_type = ev.sub_type
+            if (
+                ev.interface
+                and ev.interface.strip().lower() in self.config.pfsense_wan_interfaces
+                and ev.direction.lower() == "in"
+                and effective_tier == "tier_1_outbound_suspicious"
+            ):
+                if ev.action.lower() == "pass":
+                    effective_tier = "tier_2_access_and_auth"
+                    effective_sub_type = "wan_inbound_pass"
+                elif ev.action.lower() == "block":
+                    effective_tier = "tier_3_wan_blocked"
+                    effective_sub_type = "wan_inbound_block"
+
             # ------------------------------------------------------------------
             # Tier 1: Suspicious Outbound / Internal Lateral Blocked
             # ------------------------------------------------------------------
-            if ev.security_tier == "tier_1_outbound_suspicious":
+            if effective_tier == "tier_1_outbound_suspicious":
                 observed_internal_ips.add(ev.src_ip)
                 observed_internal_ips.add(ev.dst_ip)
                 if ev.src_host:
@@ -190,19 +207,19 @@ class ZeroTokenFilterEngine:
 
                 if (
                     self._is_whitelisted_internal_source(ev)
-                    and ev.sub_type == "outbound_uncommon_port"
+                    and effective_sub_type == "outbound_uncommon_port"
                     and ev.action.lower() == "pass"
                 ):
                     continue
                 if ev.dst_ip in self.config.whitelist_external_ips:
                     continue
                 if (
-                    ev.sub_type == "outbound_uncommon_port"
+                    effective_sub_type == "outbound_uncommon_port"
                     and ev.dst_port in self.config.whitelist_outbound_ports
                 ):
                     continue
 
-                t1_key = (ev.src_ip, ev.dst_ip, ev.dst_port, ev.proto, ev.action, ev.sub_type)
+                t1_key = (ev.src_ip, ev.dst_ip, ev.dst_port, ev.proto, ev.action, effective_sub_type)
                 tier1_groups[t1_key] += ev.hit_count
                 if t1_key not in tier1_identities:
                     tier1_identities[t1_key] = (ev.src_host, ev.src_mac, ev.dst_host, ev.dst_mac)
@@ -219,10 +236,10 @@ class ZeroTokenFilterEngine:
             # ------------------------------------------------------------------
             # Tier 2: Allowed Inbound WAN & pfSense Authentication Logs
             # ------------------------------------------------------------------
-            elif ev.security_tier == "tier_2_access_and_auth":
+            elif effective_tier == "tier_2_access_and_auth":
                 if ev.src_ip in self.config.whitelist_external_ips:
                     continue
-                t2_key = (ev.src_ip, ev.sub_type, ev.action, ev.dst_port, ev.proto)
+                t2_key = (ev.src_ip, effective_sub_type, ev.action, ev.dst_port, ev.proto)
                 tier2_groups[t2_key] += ev.hit_count
                 if t2_key not in tier2_identities:
                     tier2_identities[t2_key] = (ev.src_host, ev.src_mac)
@@ -232,7 +249,7 @@ class ZeroTokenFilterEngine:
             # ------------------------------------------------------------------
             # Tier 3: Blocked Inbound WAN Traffic (Pre-aggregated by Vector)
             # ------------------------------------------------------------------
-            elif ev.security_tier == "tier_3_wan_blocked":
+            elif effective_tier == "tier_3_wan_blocked":
                 if ev.src_ip in self.config.whitelist_external_ips or ev.src_ip == "unknown":
                     continue
                 total_raw_wan_blocks += ev.hit_count

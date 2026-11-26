@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 SUPPORTED_LLM_PROVIDERS = {"anthropic", "ollama", "openai", "openrouter"}
 SUPPORTED_MONITORING_MODES = {"auto", "onboarding", "steady"}
+DEFAULT_WAN_INTERFACES = "wan,igb0,em0,vtnet0,pppoe0,ix0,re0,igc0"
 
 
 def _parse_csv_set(value: str | None) -> set[str]:
@@ -152,6 +153,9 @@ class AppConfig:
     )
     whitelist_flows: set[str] = field(default_factory=set)
     known_flows_path: Path | None = None
+    pfsense_wan_interfaces: set[str] = field(
+        default_factory=lambda: _parse_csv_set(DEFAULT_WAN_INTERFACES)
+    )
 
     # State persistence path for deduplication cache
     state_file_path: Path = Path("/app/state/dedup_cache.json")
@@ -201,6 +205,11 @@ class AppConfig:
         object.__setattr__(self, "llm_api_key", effective_key)
         object.__setattr__(self, "llm_base_url", base_url)
         object.__setattr__(self, "llm_model", effective_model)
+        object.__setattr__(
+            self,
+            "pfsense_wan_interfaces",
+            {item.strip().lower() for item in self.pfsense_wan_interfaces if item.strip()},
+        )
 
     @classmethod
     def from_env(cls, env_path: str | Path | None = None) -> AppConfig:
@@ -317,6 +326,9 @@ class AppConfig:
             whitelist_flows=_parse_flow_set(os.getenv("WHITELIST_FLOWS")),
             known_flows_path=Path(
                 os.getenv("KNOWN_FLOWS_PATH", "config/known_flows.json")
+            ),
+            pfsense_wan_interfaces=_parse_csv_set(
+                os.getenv("PFSENSE_WAN_INTERFACES", "").strip() or DEFAULT_WAN_INTERFACES
             ),
             state_file_path=Path(
                 os.getenv("STATE_FILE_PATH", "/tmp/pfsensemon_dedup_cache.json")

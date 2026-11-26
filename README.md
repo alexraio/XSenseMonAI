@@ -259,6 +259,7 @@ LLM_MODEL=google/gemini-2.5-flash
 | `TELEGRAM_CHAT_ID` | Numeric Telegram chat ID (or bot username for auto-discovery) | `123456789` |
 | `VECTOR_SYSLOG_PORT` | UDP port exposed for pfSense syslog | `5140` |
 | `LOKI_HTTP_PORT` | TCP port exposed for Grafana & Hermes | `3100` |
+| `PFSENSE_WAN_INTERFACES` | Comma-separated WAN interface names (`direction="in"` traffic is classified as WAN Tier 2/3 even in Double-NAT/DMZ setups) | `wan,igb0,em0,vtnet0,pppoe0,ix0,re0,igc0` |
 | `ANALYSIS_INTERVAL_MINUTES` | Frequency of automated AI checks | `15` |
 | `MAX_CATCHUP_MINUTES` | Max look-back to backfill windows missed during host sleep/downtime | `1440` |
 | `MONITORING_MODE` | Operational lifecycle (`auto`, `onboarding`, or `steady`) | `auto` |
